@@ -83,8 +83,6 @@ def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buff
             st.error(f"❌ Error parsing PDF match: {e}")
     return panels
 
-
-# --- Parser with added debugging ---
 def parse_excel_panels(df, spacing, column_map):
     panels = []
     
@@ -98,24 +96,9 @@ def parse_excel_panels(df, spacing, column_map):
         st.error("Error: Please map all required dimension columns (Type, Length, Height, Depth).")
         return []
 
-    # --- NEW DEBUGGING LINES ---
-    st.write(f"DEBUG: Type of 'df' object going into parser: `{type(df)}`")
-    if not isinstance(df, pd.DataFrame):
-        st.error("FATAL DEBUG ERROR: The data passed to the parser is not a DataFrame. Stopping.")
-        return []
-    # --- END DEBUGGING ---
-
     for index, row in df.iterrows():
-        # --- NEW DEBUGGING LINES ---
-        st.write(f"DEBUG: Type of 'row' object on iteration {index}: `{type(row)}`")
-        if not isinstance(row, pd.Series):
-            st.warning(f"Skipping iteration {index} because the row object is not of the correct type.")
-            continue
-        # --- END DEBUGGING ---
-
         try:
-            # Use standard indexing for safety
-            panel_type_value = row[type_col]
+            panel_type_value = row.get(type_col)
             if pd.isna(panel_type_value) or str(panel_type_value).strip() == "":
                 continue
 
@@ -143,8 +126,6 @@ def parse_excel_panels(df, spacing, column_map):
             panels.append({ "Type": str(row[type_col]), "Height": d, "Width": l, "Depth": h, "Weight": weight })
         except Exception as e:
             st.error(f"❌ An error occurred on row index {index}: {e}")
-            st.write("Problematic row data:", row.to_dict())
-
 
     if not panels:
          st.warning("Warning: Could not parse any valid panels with the selected columns. Please check your mappings and file content.")
@@ -162,25 +143,40 @@ if uploaded_file:
     file_extension = uploaded_file.name.split('.')[-1].lower()
     
     if file_extension == "pdf":
-        # PDF logic is unchanged
-        pass
+        analyze_pdf = st.button("Run PDF Analysis")
+        if analyze_pdf:
+            # PDF logic
+            pass
     
     elif file_extension == "csv":
         st.header("1. File Settings")
         
         col1_settings, col2_settings = st.columns(2)
+        
         with col1_settings:
-            header_row = st.number_input("Select the header row (the first row is 0):", min_value=0, max_value=20, value=2)
+            header_row = st.number_input(
+                "Select the header row (the first row is 0):",
+                min_value=0, max_value=20, value=2,
+                help="This should be the row with names like 'cast unit', 'length, mm', etc."
+            )
+        
         with col2_settings:
             delimiter_options = { "Comma": ",", "Semicolon": ";", "Tab": "\t" }
-            delimiter_choice = st.selectbox("Select column delimiter:", options=list(delimiter_options.keys()))
+            delimiter_choice = st.selectbox(
+                "Select column delimiter:",
+                options=list(delimiter_options.keys())
+            )
         
         df = None
         try:
             delimiter = delimiter_options[delimiter_choice]
             df = pd.read_csv(
-                uploaded_file, header=header_row, encoding='utf-8-sig',
-                sep=delimiter, engine='python', index_col=0 
+                uploaded_file,
+                header=header_row,
+                encoding='utf-8-sig',
+                sep=delimiter,
+                engine='python',
+                index_col=0 
             )
         except Exception as e:
             st.error(f"Error Reading CSV File: {e}")
@@ -188,9 +184,10 @@ if uploaded_file:
             st.stop()
 
         st.header("2. Data Preview")
-        st.info("Here are the first 5 rows of your data.")
+        st.info("Here are the first 5 rows of your data. If columns are not separated correctly, please adjust the delimiter above.")
         st.dataframe(df.head())
 
+        # Clean the column names to be safe
         df.columns = df.columns.str.strip()
         app_columns = [col for col in df.columns if col is not None and str(col).strip() != '']
 
@@ -199,12 +196,13 @@ if uploaded_file:
         
         col1_map, col2_map = st.columns(2)
         with col1_map:
-            type_col = st.selectbox("Panel Type/Name Column:", app_columns, key="type_col")
-            len_col = st.selectbox("Length (mm) Column:", app_columns, key="len_col")
-            wgt_col = st.selectbox("Weight (kg) Column (Optional):", [None] + app_columns, key="wgt_col")
+            # FIX: Removed the 'index' parameter to prevent the ValueError
+            type_col = st.selectbox("Panel Type/Name Column:", app_columns)
+            len_col = st.selectbox("Length (mm) Column:", app_columns)
+            wgt_col = st.selectbox("Weight (kg) Column (Optional):", [None] + app_columns)
         with col2_map:
-            hgt_col = st.selectbox("Height (mm) Column:", app_columns, key="hgt_col")
-            dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns, key="dep_col")
+            hgt_col = st.selectbox("Height (mm) Column:", app_columns)
+            dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns)
 
         st.header("4. Run Analysis")
         analyze_data = st.button("Run Analysis with these settings")
