@@ -182,18 +182,18 @@ if uploaded_file:
         try:
             if file_extension == "xlsx":
                 try:
-                    # Attempt to read as a standard Excel file
                     df = pd.read_excel(uploaded_file, header=header_row)
                 except ValueError as e:
-                    # If it's a format error, try reading it as a CSV instead
                     if "Excel file format cannot be determined" in str(e):
                         st.warning("⚠️ This .xlsx file could not be read as standard Excel. Attempting to read as a CSV file.")
-                        uploaded_file.seek(0) # Reset file buffer before reading again
-                        df = pd.read_csv(uploaded_file, header=header_row)
+                        uploaded_file.seek(0)
+                        # FIX: Specify encoding for the fallback CSV read
+                        df = pd.read_csv(uploaded_file, header=header_row, encoding='utf-8-sig')
                     else:
-                        raise e # Re-raise other ValueErrors
-            else: # It's a .csv file, so read it as such
-                df = pd.read_csv(uploaded_file, header=header_row)
+                        raise e
+            else: # It's a .csv file
+                # FIX: Specify encoding to handle files with a Byte Order Mark (BOM)
+                df = pd.read_csv(uploaded_file, header=header_row, encoding='utf-8-sig')
         except Exception as e:
             st.error(f"Fatal Error Reading File: {e}")
             st.info("The application cannot continue. Please ensure the 'header row' number is correct and the file is not corrupted.")
