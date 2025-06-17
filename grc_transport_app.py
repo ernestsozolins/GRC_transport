@@ -83,6 +83,7 @@ def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buff
             st.error(f"❌ Error parsing PDF match: {e}")
     return panels
 
+# --- Parser with corrected data access method ---
 def parse_excel_panels(df, spacing, column_map):
     panels = []
     
@@ -98,7 +99,8 @@ def parse_excel_panels(df, spacing, column_map):
 
     for index, row in df.iterrows():
         try:
-            panel_type_value = row.get(type_col)
+            # FIX: Use standard, direct indexing row['col_name'] instead of row.get('col_name')
+            panel_type_value = row[type_col]
             if pd.isna(panel_type_value) or str(panel_type_value).strip() == "":
                 continue
 
@@ -149,47 +151,33 @@ if uploaded_file:
     elif file_extension == "csv":
         st.header("1. File Settings")
         
-        # --- FIX: New robust 2-step header identification ---
-        delimiter_options = { "Comma": ",", "Semicolon": ";", "Tab": "\t" }
-        delimiter_choice = st.selectbox(
-            "Select column delimiter:",
-            options=list(delimiter_options.keys())
-        )
+        col1_settings, col2_settings = st.columns(2)
+        with col1_settings:
+            header_row = st.number_input(
+                "Select the header row (the first row is 0):",
+                min_value=0, max_value=20, value=2
+            )
+        with col2_settings:
+            delimiter_options = { "Comma": ",", "Semicolon": ";", "Tab": "\t" }
+            delimiter_choice = st.selectbox(
+                "Select column delimiter:",
+                options=list(delimiter_options.keys())
+            )
         
-        df_raw = None
+        df = None
         try:
             delimiter = delimiter_options[delimiter_choice]
-            # Step 1: Read the file as raw data with no header
-            df_raw = pd.read_csv(
-                uploaded_file,
-                header=None, # Read with no header first
-                encoding='utf-8-sig',
-                sep=delimiter,
-                engine='python'
+            df = pd.read_csv(
+                uploaded_file, header=header_row, encoding='utf-8-sig',
+                sep=delimiter, engine='python', index_col=0 
             )
         except Exception as e:
             st.error(f"Error Reading CSV File: {e}")
-            st.info("Please ensure the delimiter is correct.")
+            st.info("Please ensure the 'header row' and 'delimiter' are correct.")
             st.stop()
 
-        st.header("2. Identify Header and Preview Data")
-        st.info("Below is a raw preview of your file. Please identify the row number that contains your column headers (e.g., 'cast unit').")
-        st.dataframe(df_raw.head(10))
-
-        # Step 2: Let the user specify which row is the header
-        header_row = st.number_input(
-            "Which row number contains the headers? (The first row is 0)",
-            min_value=0, max_value=20, value=2
-        )
-
-        # Step 3: Create the final dataframe with the correct header
-        df = df_raw.copy()
-        new_header = df.iloc[header_row]
-        df = df[header_row + 1:]
-        df.columns = new_header
-        df = df.reset_index(drop=True)
-        
-        st.subheader("Corrected Data Preview")
+        st.header("2. Data Preview")
+        st.info("Here are the first 5 rows of your data. If columns are not separated correctly, please adjust the settings above.")
         st.dataframe(df.head())
 
         df.columns = df.columns.astype(str).str.strip()
