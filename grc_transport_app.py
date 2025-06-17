@@ -135,8 +135,7 @@ def parse_excel_panels(df, spacing, column_map):
 st.set_page_config(page_title="GRC Transport Planner", layout="wide")
 st.title("🚚 GRC Panel Transport & Storage Estimator")
 
-# FIX: Simplified the file uploader to prioritize clean CSV files.
-uploaded_file = st.file_uploader("Upload a clean CSV or a PDF File", type=["csv", "pdf"])
+uploaded_file = st.file_uploader("Upload a CSV or PDF File", type=["csv", "pdf"])
 spacing = st.number_input("Panel spacing (mm)", min_value=0, value=100)
 
 if uploaded_file:
@@ -149,22 +148,32 @@ if uploaded_file:
             # ...
     
     elif file_extension == "csv":
-        # Simplified logic for reading a clean CSV file
+        # FIX: Re-introduced the header row selection, as it's critical
+        st.header("1. File Settings")
+        header_row = st.number_input(
+            "Select the row containing column names (the first row is 0):",
+            min_value=0, max_value=20, value=2,
+            help="This should be the row with names like 'cast unit', 'length, mm', etc."
+        )
+
+        df = None
         try:
-            df = pd.read_csv(uploaded_file, header=0) # Assume header is in the first row (index 0) of the clean file
+            # Use encoding='utf-8-sig' to handle CSVs with a BOM
+            df = pd.read_csv(uploaded_file, header=header_row, encoding='utf-8-sig')
         except Exception as e:
             st.error(f"Error Reading CSV File: {e}")
-            st.info("Please ensure the uploaded file is a standard, comma-separated CSV file with headers in the first row.")
+            st.info("Please ensure the 'header row' number is correct and the file is a standard comma-separated CSV.")
             st.stop()
 
-        st.header("1. Data Preview")
-        st.info("Here are the first 5 rows of your uploaded file.")
+        st.header("2. Data Preview")
+        st.info("Here are the first 5 rows of your data. Use this to verify the correct header was selected.")
         st.dataframe(df.head())
 
+        # Clean the column names to be safe
         df.columns = df.columns.str.strip()
-        app_columns = df.columns.tolist()
+        app_columns = [col for col in df.columns if col is not None and str(col).strip() != '']
 
-        st.header("2. Map Your Columns")
+        st.header("3. Map Your Columns")
         st.info("Select which column from your file corresponds to each required data field.")
         
         col1, col2 = st.columns(2)
@@ -176,7 +185,7 @@ if uploaded_file:
             hgt_col = st.selectbox("Height (mm) Column:", app_columns)
             dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns)
 
-        st.header("3. Run Analysis")
+        st.header("4. Run Analysis")
         analyze_data = st.button("Run Analysis with these settings")
 
         if analyze_data:
@@ -193,4 +202,4 @@ if uploaded_file:
                 output = export_to_excel(beds, trucks)
                 st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
     else:
-        st.error("Unsupported file type. Please upload a .csv or .pdf file.")
+        st.error("Unsupported file format. Please upload a .csv or .pdf file.")
