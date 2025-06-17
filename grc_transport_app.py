@@ -8,6 +8,7 @@ import xlsxwriter
 import difflib
 
 # --- Parsing Logic ---
+# (Functions outside of parse_excel_panels are unchanged)
 def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buffer=0.10):
     panels = []
     with pdfplumber.open(file_path) as pdf:
@@ -94,65 +95,49 @@ def export_to_excel(beds, trucks):
     return output
 
 
-# --- FINAL, SIMPLIFIED PARSER ---
+# --- SIMPLIFIED PARSER per user request ---
 def parse_excel_panels(df, spacing=100):
+    # This simplified version only looks for single numeric values in the dimension columns.
+    # It will skip rows with multi-part dimension strings.
     df.columns = df.columns.str.strip().str.lower()
     colnames = df.columns.tolist()
 
     column_map = {}
+    # The targets no longer include fallbacks like 'name' or 'dimensions'
     targets = {
-        "panel type": ["panel type", "type", "cast unit", "cast_unit", "name"],
+        "panel type": ["panel type", "type", "cast unit", "cast_unit"],
         "height (mm)": ["height", "height (mm)", "augstums"],
         "length (mm)": ["length", "length (mm)", "garums"],
         "depth (mm)": ["depth", "depth (mm)", "platums", "width"],
         "weight (kg)": ["weight", "weight (kg)", "svars"],
-        "dimensions": ["dimensions", "dimensions (l*h*w), mm", "izmēri"]
     }
     
     for key, potential_names in targets.items():
         match = fuzzy_match_column(colnames, potential_names)
-        if match:
-            column_map[key] = match
+        if match: column_map[key] = match
 
     panels = []
     for index, row in df.iterrows():
         try:
-            l_num, h_num, d_num = None, None, None
+            # Directly try to convert the essential dimension columns to numbers
+            l_num = pd.to_numeric(row.get(column_map.get("length (mm)")), errors='coerce')
+            h_num = pd.to_numeric(row.get(column_map.get("height (mm)")), errors='coerce')
+            d_num = pd.to_numeric(row.get(column_map.get("depth (mm)")), errors='coerce')
 
-            # Attempt 1: Parse the 'dimensions' column first
-            dim_val = row.get(column_map.get("dimensions"))
-            if pd.notna(dim_val) and isinstance(dim_val, str):
-                parts = re.findall(r'(\d+\.?\d*)', dim_val)
-                if len(parts) == 3:
-                    l_num = float(parts[0])
-                    h_num = float(parts[1])
-                    d_num = float(parts[2])
-
-            # Attempt 2: If the first method failed, try individual columns
-            if l_num is None:
-                l_val = pd.to_numeric(row.get(column_map.get("length (mm)")), errors='coerce')
-                h_val = pd.to_numeric(row.get(column_map.get("height (mm)")), errors='coerce')
-                d_val = pd.to_numeric(row.get(column_map.get("depth (mm)")), errors='coerce')
-
-                if pd.notna(l_val) and pd.notna(h_val) and pd.notna(d_val):
-                    l_num, h_num, d_num = l_val, h_val, d_val
-            
-            # If after all attempts we still don't have numbers, skip the row silently.
-            if l_num is None:
+            # If any dimension is not a valid number, skip this row.
+            if pd.isna(l_num) or pd.isna(h_num) or pd.isna(d_num):
                 continue
             
-            # If we get here, l_num, h_num, and d_num are guaranteed to be numbers.
             h = h_num + 2 * spacing
             l = l_num + 2 * spacing
             d = d_num + 2 * spacing
 
             # --- Weight Calculation ---
             weight = 0
-            weight_val = row.get(column_map.get("weight (kg)"))
-            weight_num = pd.to_numeric(weight_val, errors='coerce')
+            weight_num = pd.to_numeric(row.get(column_map.get("weight (kg)")), errors='coerce')
             if pd.notna(weight_num) and weight_num > 0:
                 weight = weight_num
-            else: # Fallback to estimation
+            else:
                 thickness, density, buffer = 0.016, 2100, 0.10
                 area_m2 = (l_num / 1000) * (h_num / 1000)
                 volume_m3 = area_m2 * (d_num / 1000 if d_num > 5 else thickness)
@@ -164,10 +149,9 @@ def parse_excel_panels(df, spacing=100):
             })
         except Exception as e:
             st.error(f"❌ An error occurred on row index {index}: {e}")
-            st.write("This row could not be processed:", row.to_dict())
-    
+
     if not panels:
-         st.warning("Warning: Could not parse any valid panel data from the file. Please check the file's content and the selected header row.")
+         st.warning("Warning: Could not parse any valid panel data. This may be because no rows contained individual numbers for height, length, and width within columns A-I.")
     return panels
 
 
@@ -185,12 +169,14 @@ if uploaded_file:
         if file_extension in ["xlsx", "csv"]:
             st.subheader("File Settings")
             header_row = st.number_input("Select the header row (the first row is 0)", min_value=0, max_value=20, value=2)
-            if file_extension == "xlsx":
-                df = pd.read_excel(uploaded_file, header=header_row)
-            else:
-                df = pd.read_csv(uploaded_file, header=header_row)
             
-            st.subheader("Data Preview (First 5 Rows)")
+            # FIX: Only read columns A through I
+            if file_extension == "xlsx":
+                df = pd.read_excel(uploaded_file, header=header_row, usecols='A:I')
+            else: # "csv"
+                df = pd.read_csv(uploaded_file, header=header_row, usecols=range(9)) # 9 columns = A through I
+            
+            st.subheader("Data Preview (First 5 Rows from Columns A-I)")
             st.dataframe(df.head())
             
             analyze_data = st.button("Run Analysis")
@@ -203,6 +189,7 @@ if uploaded_file:
                     st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
 
         elif file_extension == "pdf":
+            # PDF logic remains unchanged
             analyze_pdf = st.button("Run PDF Analysis")
             if analyze_pdf:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
