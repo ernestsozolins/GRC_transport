@@ -44,12 +44,11 @@ def fuzzy_match_column(df_columns, target_keywords):
             return match[0]
     return None
 
-def parse_excel_panels(file_path, spacing=100):
-    df = pd.read_excel(file_path)
+def parse_excel_panels(file_path, spacing=100, header_row=0):
+    df = pd.read_excel(file_path, header=header_row)
     df.columns = df.columns.str.strip().str.lower()
     colnames = df.columns.tolist()
     st.write("Detected columns:", colnames)
-
 
     column_map = {}
     targets = {
@@ -172,7 +171,25 @@ st.title("🚚 GRC Panel Transport & Storage Estimator")
 uploaded_file = st.file_uploader("Upload a PDF or Excel File", type=["pdf", "xlsx"])
 spacing = st.number_input("Panel spacing (mm)", min_value=0, value=100)
 
-if uploaded_file:
+if uploaded_file and uploaded_file.name.endswith(".xlsx"):
+    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+        tmp_file.write(uploaded_file.read())
+        tmp_file_path = tmp_file.name
+
+    try:
+        preview_df = pd.read_excel(tmp_file_path, header=None, nrows=5)
+        st.subheader("Preview First Rows")
+        st.dataframe(preview_df)
+        header_row = st.number_input("Select header row (0-indexed)", min_value=0, max_value=10, value=1)
+        proceed = st.button("Analyze")
+    except Exception as e:
+        st.error(f"Error reading Excel preview: {e}")
+        preview_df = None
+        proceed = False
+else:
+    proceed = st.button("Analyze")
+
+if uploaded_file and proceed:
     analyze = st.button("Analyze")
     if analyze:
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
@@ -183,7 +200,7 @@ if uploaded_file:
             if uploaded_file.name.endswith(".pdf"):
                 panels = parse_pdf_panels(tmp_file_path, spacing)
             else:
-                panels = parse_excel_panels(tmp_file_path, spacing)
+                panels = parse_excel_panels(tmp_file_path, spacing, header_row=header_row)
 
             beds, trucks = compute_beds_and_trucks(panels)
             st.success(f"Parsed {len(panels)} panels, {len(beds)} beds, {len(trucks)} trucks")
