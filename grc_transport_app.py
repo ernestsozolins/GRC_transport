@@ -85,6 +85,7 @@ def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buff
             st.error(f"❌ Error parsing PDF match: {e}")
     return panels
 
+
 # --- Parser that uses a user-defined column map ---
 def parse_excel_panels(df, spacing, column_map):
     panels = []
@@ -171,60 +172,62 @@ if uploaded_file:
         df = None
         # --- Step 1: Read the file ---
         try:
+            # FIX: Remove the 'usecols' constraint to read all columns from the file
+            # This is more robust than trying to guess the correct range.
             if file_extension == "xlsx":
-                df = pd.read_excel(uploaded_file, header=header_row, usecols='A:I')
+                df = pd.read_excel(uploaded_file, header=header_row)
             else: # "csv"
-                df = pd.read_csv(uploaded_file, header=header_row, usecols=range(9))
+                df = pd.read_csv(uploaded_file, header=header_row)
         except Exception as e:
-            st.error(f"Error Reading File: {e}")
-            st.info("Please ensure the 'header row' number is correct. This should be the row containing column names like 'cast unit', 'length, mm', etc.")
+            st.error(f"Fatal Error Reading File: {e}")
+            st.info("The application cannot continue. Please ensure the 'header row' number is correct and the file is not corrupted.")
+            st.stop() # Stop the script if file reading fails
 
         # --- Step 2: If file was read successfully, show the mapping UI ---
-        if df is not None and not df.empty:
-            st.success("File read successfully. Please map your columns below.")
-            df.columns = df.columns.str.strip()
-            app_columns = df.columns.tolist()
+        st.success("File read successfully! Please map your columns below.")
+        df.columns = df.columns.str.strip()
+        app_columns = df.columns.tolist()
 
-            st.header("2. Map Your Columns")
-            st.info("Select which column from your file corresponds to each required data field.")
+        st.header("2. Map Your Columns")
+        st.info("Select which column from your file corresponds to each required data field.")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            type_idx = app_columns.index('cast unit') if 'cast unit' in app_columns else 0
+            type_col = st.selectbox("Panel Type/Name Column:", app_columns, index=type_idx)
             
-            col1, col2 = st.columns(2)
-            with col1:
-                type_idx = app_columns.index('cast unit') if 'cast unit' in app_columns else 0
-                type_col = st.selectbox("Panel Type/Name Column:", app_columns, index=type_idx)
+            len_idx = app_columns.index('length, mm') if 'length, mm' in app_columns else 0
+            len_col = st.selectbox("Length (mm) Column:", app_columns, index=len_idx)
+            
+            wgt_col = st.selectbox("Weight (kg) Column (Optional):", [None] + app_columns)
+
+        with col2:
+            hgt_idx = app_columns.index('height, mm') if 'height, mm' in app_columns else 0
+            hgt_col = st.selectbox("Height (mm) Column:", app_columns, index=hgt_idx)
+
+            dep_idx = app_columns.index('width, mm') if 'width, mm' in app_columns else 0
+            dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns, index=dep_idx)
+
+        st.header("3. Run Analysis")
+        analyze_data = st.button("Run Analysis with these settings")
+
+        if analyze_data:
+            try:
+                column_map = {
+                    "panel type": type_col,
+                    "length (mm)": len_col,
+                    "height (mm)": hgt_col,
+                    "depth (mm)": dep_col,
+                    "weight (kg)": wgt_col,
+                }
+                panels = parse_excel_panels(df, spacing, column_map)
                 
-                len_idx = app_columns.index('length, mm') if 'length, mm' in app_columns else 0
-                len_col = st.selectbox("Length (mm) Column:", app_columns, index=len_idx)
-                
-                wgt_col = st.selectbox("Weight (kg) Column (Optional):", [None] + app_columns)
-
-            with col2:
-                hgt_idx = app_columns.index('height, mm') if 'height, mm' in app_columns else 0
-                hgt_col = st.selectbox("Height (mm) Column:", app_columns, index=hgt_idx)
-
-                dep_idx = app_columns.index('width, mm') if 'width, mm' in app_columns else 0
-                dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns, index=dep_idx)
-
-            st.header("3. Run Analysis")
-            analyze_data = st.button("Run Analysis with these settings")
-
-            if analyze_data:
-                try:
-                    column_map = {
-                        "panel type": type_col,
-                        "length (mm)": len_col,
-                        "height (mm)": hgt_col,
-                        "depth (mm)": dep_col,
-                        "weight (kg)": wgt_col,
-                    }
-                    panels = parse_excel_panels(df, spacing, column_map)
-                    
-                    if panels:
-                        beds, trucks = compute_beds_and_trucks(panels)
-                        st.success(f"Parsed {len(panels)} panels, which fit into {len(beds)} beds and {len(trucks)} trucks.")
-                        output = export_to_excel(beds, trucks)
-                        st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
-                except Exception as e:
-                    st.error(f"An error occurred during analysis: {e}")
+                if panels:
+                    beds, trucks = compute_beds_and_trucks(panels)
+                    st.success(f"Parsed {len(panels)} panels, which fit into {len(beds)} beds and {len(trucks)} trucks.")
+                    output = export_to_excel(beds, trucks)
+                    st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
+            except Exception as e:
+                st.error(f"An error occurred during analysis: {e}")
     else:
         st.error("Unsupported file type. Please upload a PDF, XLSX, or CSV file.")
