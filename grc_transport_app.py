@@ -131,6 +131,64 @@ def parse_excel_panels(df, spacing, column_map):
          st.warning("Warning: Could not parse any valid panels with the selected columns.")
     return panels
 
+# Refactored function to handle the UI for any dataframe
+def process_dataframe(df, spacing):
+    st.header("2. Data Preview")
+    st.info("Here are the first 5 rows of your data. Use this to verify the correct header was selected.")
+    st.dataframe(df.head())
+
+    # Clean column names and prepare for dropdowns
+    df.columns = df.columns.astype(str).str.strip()
+    app_columns = [col for col in df.columns if col.strip() != '']
+
+    st.header("3. Map Your Columns")
+    st.info("The app will try to guess the correct columns. Please verify them.")
+    
+    app_columns_lower = [col.lower() for col in app_columns]
+    def find_default_index(target_name):
+        try:
+            return app_columns_lower.index(target_name)
+        except ValueError:
+            return 0
+
+    col1_map, col2_map = st.columns(2)
+    with col1_map:
+        type_col = st.selectbox("Panel Type/Name Column:", app_columns, index=find_default_index('cast unit'))
+        len_col = st.selectbox("Length (mm) Column:", app_columns, index=find_default_index('length, mm'))
+        wgt_col = st.selectbox("Weight (kg) Column (Optional):", [None] + app_columns)
+    with col2_map:
+        hgt_col = st.selectbox("Height (mm) Column:", app_columns, index=find_default_index('height, mm'))
+        dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns, index=find_default_index('width, mm'))
+
+    st.header("4. Run Analysis")
+    if st.button("Run Analysis with these settings"):
+        column_map = {
+            "panel type": type_col, "length (mm)": len_col,
+            "height (mm)": hgt_col, "depth (mm)": dep_col,
+            "weight (kg)": wgt_col,
+        }
+        panels = parse_excel_panels(df, spacing, column_map)
+        
+        if panels:
+            beds, trucks = compute_beds_and_trucks(panels)
+            st.success(f"Parsed {len(panels)} panels, which fit into {len(beds)} beds and {len(trucks)} trucks.")
+            
+            st.subheader("Bed Summary")
+            st.dataframe(pd.DataFrame(beds))
+            st.subheader("Truck Summary")
+            truck_summary_list = []
+            for i, truck in enumerate(trucks):
+                all_panel_types = ", ".join(b['Panel Types'] for b in truck)
+                truck_summary_list.append({
+                    "Truck #": i + 1, "Num Beds": len(truck),
+                    "Total Weight (kg)": sum(b['Weight'] for b in truck),
+                    "Panel Types": all_panel_types
+                })
+            st.dataframe(pd.DataFrame(truck_summary_list))
+
+            output = export_to_excel(beds, trucks)
+            st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
+
 
 # --- Streamlit App ---
 st.set_page_config(page_title="GRC Transport Planner", layout="wide")
@@ -141,104 +199,50 @@ spacing = st.number_input("Panel spacing (mm)", min_value=0, value=100)
 
 if uploaded_file:
     file_extension = uploaded_file.name.split('.')[-1].lower()
-    
+    df = None
+
     if file_extension == "pdf":
         # PDF logic is unchanged
         pass
     
-    else: # Treat any tabular file (CSV, XLSX) with the same robust logic
+    # --- Combined logic for CSV and Excel ---
+    elif file_extension in ["csv", "xlsx"]:
         st.header("1. File Settings")
         
-        col1_settings, col2_settings = st.columns(2)
-        with col1_settings:
+        # Delimiter selection is only shown for CSV files
+        delimiter = None
+        if file_extension == "csv":
             delimiter_options = { "Semicolon (;)": ";", "Comma (,)": ",", "Tab": "\t" }
             delimiter_choice = st.selectbox("Column Delimiter:", options=list(delimiter_options.keys()))
-        
-        df_raw = None
-        try:
             delimiter = delimiter_options[delimiter_choice]
-            # Read the entire file as raw data, which is the most robust first step
-            df_raw = pd.read_csv(uploaded_file, header=None, sep=delimiter, encoding='utf-8-sig', engine='python')
-        except Exception as e:
-            st.error(f"Error Reading File: {e}")
-            st.info("The file could not be read. Please ensure the delimiter is correct and the file is a valid text file.")
-            st.stop()
-
-        st.header("2. Identify Header and Preview Data")
-        st.info("Below is a raw preview of your file. Please identify the row number that contains your column headers.")
-        st.dataframe(df_raw.head(10))
 
         header_row = st.number_input("Which row number contains the headers? (First row is 0)", min_value=0, value=2)
 
-        df = None
         try:
-            df_processed = df_raw.copy()
-            new_header = df_processed.iloc[header_row]
-            df_processed = df_processed[header_row + 1:]
-            df_processed.columns = new_header
-            df_processed.reset_index(drop=True, inplace=True)
+            # Read file raw, without headers
+            if file_extension == "xlsx":
+                df_raw = pd.read_excel(uploaded_file, header=None)
+            else: # csv
+                df_raw = pd.read_csv(uploaded_file, header=None, sep=delimiter, encoding='utf-8-sig', engine='python')
+
+            # Promote the selected row to header
+            new_header = df_raw.iloc[header_row]
+            df = df_raw[header_row + 1:]
+            df.columns = new_header
+            df = df.reset_index(drop=True)
             
-            # Check for and remove an initial unnamed index column if it exists
-            first_col_name = str(df_processed.columns[0])
+            # Remove the initial index column if it exists and is unnamed
+            first_col_name = str(df.columns[0])
             if 'unnamed' in first_col_name.lower():
-                df = df_processed.iloc[:, 1:].copy()
-            else:
-                df = df_processed
+                df = df.iloc[:, 1:].copy()
+
         except Exception as e:
-            st.error(f"Error setting header row: {e}")
-            st.info(f"Could not set row {header_row} as the header. Please make sure the number is correct.")
+            st.error(f"Error Reading File: {e}")
+            st.info("Please ensure the file format, delimiter, and header row number are correct.")
             st.stop()
-            
-        st.subheader("Corrected Data Preview")
-        st.dataframe(df.head())
 
-        df.columns = df.columns.astype(str).str.strip()
-        app_columns = [col for col in df.columns if col.strip() != '']
+        # Call the common UI function to process the dataframe
+        process_dataframe(df, spacing)
 
-        st.header("3. Map Your Columns")
-        st.info("The app will try to guess the correct columns. Please verify them.")
-        
-        app_columns_lower = [col.lower() for col in app_columns]
-        def find_default_index(target_name):
-            try: return app_columns_lower.index(target_name)
-            except ValueError: return 0
-
-        col1_map, col2_map = st.columns(2)
-        with col1_map:
-            type_col = st.selectbox("Panel Type/Name Column:", app_columns, index=find_default_index('cast unit'))
-            len_col = st.selectbox("Length (mm) Column:", app_columns, index=find_default_index('length, mm'))
-            wgt_col = st.selectbox("Weight (kg) Column (Optional):", [None] + app_columns)
-        with col2_map:
-            hgt_col = st.selectbox("Height (mm) Column:", app_columns, index=find_default_index('height, mm'))
-            dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns, index=find_default_index('width, mm'))
-
-        st.header("4. Run Analysis")
-        analyze_data = st.button("Run Analysis with these settings")
-
-        if analyze_data:
-            column_map = {
-                "panel type": type_col, "length (mm)": len_col,
-                "height (mm)": hgt_col, "depth (mm)": dep_col,
-                "weight (kg)": wgt_col,
-            }
-            panels = parse_excel_panels(df, spacing, column_map)
-            
-            if panels:
-                beds, trucks = compute_beds_and_trucks(panels)
-                st.success(f"Parsed {len(panels)} panels, which fit into {len(beds)} beds and {len(trucks)} trucks.")
-                
-                st.subheader("Bed Summary")
-                st.dataframe(pd.DataFrame(beds))
-                st.subheader("Truck Summary")
-                truck_summary_list = []
-                for i, truck in enumerate(trucks):
-                    all_panel_types = ", ".join(b['Panel Types'] for b in truck)
-                    truck_summary_list.append({
-                        "Truck #": i + 1, "Num Beds": len(truck),
-                        "Total Weight (kg)": sum(b['Weight'] for b in truck),
-                        "Panel Types": all_panel_types
-                    })
-                st.dataframe(pd.DataFrame(truck_summary_list))
-
-                output = export_to_excel(beds, trucks)
-                st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
+    else:
+        st.error("Unsupported file format.")
