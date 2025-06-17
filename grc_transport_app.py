@@ -10,6 +10,8 @@ import difflib
 # --- Parsing Logic ---
 def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buffer=0.10):
     panels = []
+    st.write("
+--- Debugging Excel Rows ---")
     with pdfplumber.open(file_path) as pdf:
         text = "\n".join(page.extract_text() for page in pdf.pages if page.extract_text())
 
@@ -29,12 +31,15 @@ def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buff
             weight = estimate_weight(int(length), int(height))
             panels.append({
                 "Type": panel_type,
-                "Height": d,
-                "Width": l,
-                "Depth": h,
+                    "Height": d,
+                    "Width": l,
+                    "Depth": h,
                 "Weight": weight
             })
 
+            except Exception as e:
+            st.error(f"❌ Error parsing row: {e}")
+            st.write("🚨 Problematic row data:", row.to_dict())
     return panels
 
 def fuzzy_match_column(df_columns, target_keywords):
@@ -82,6 +87,7 @@ def parse_excel_panels(file_path, spacing=100, header_row=0):
 
     panels = []
     for _, row in df.iterrows():
+        try:
         h = row[column_map["height (mm)"]] + 2 * spacing
         l = row[column_map["length (mm)"]] + 2 * spacing
         d = row[column_map["depth (mm)"]] + 2 * spacing
@@ -93,13 +99,14 @@ def parse_excel_panels(file_path, spacing=100, header_row=0):
                     weight = float(val)
             except Exception:
                 weight = 0
-        panels.append({
-            "Type": str(row[column_map["panel type"]]) if pd.notna(row[column_map["panel type"]]) else "Unknown",
+                    panel = {
+                "Type": str(row[column_map["panel type"]]) if pd.notna(row[column_map["panel type"]]) else "Unknown",
             "Height": d,
             "Width": l,
             "Depth": h,
-            "Weight": weight
-        })
+                "Weight": weight
+            }
+            panels.append(panel)
     return panels
 
 def compute_beds_and_trucks(panels, bed_width=2400, bed_weight_limit=2500, truck_weight_limit=15000, truck_max_length=13620):
