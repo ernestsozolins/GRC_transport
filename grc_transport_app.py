@@ -46,6 +46,7 @@ def fuzzy_match_column(df_columns, target_keywords):
 
 def parse_excel_panels(file_path, spacing=100, header_row=0):
     df = pd.read_excel(file_path, header=header_row)
+    df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
     df.columns = df.columns.str.strip().str.lower()
     colnames = df.columns.tolist()
     st.write("Detected columns:", colnames)
@@ -92,7 +93,7 @@ def parse_excel_panels(file_path, spacing=100, header_row=0):
             except Exception:
                 weight = 0
         panels.append({
-            "Type": row[column_map["panel type"]],
+            "Type": str(row[column_map["panel type"]]) if pd.notna(row[column_map["panel type"]]) else "Unknown",
             "Height": d,
             "Width": l,
             "Depth": h,
