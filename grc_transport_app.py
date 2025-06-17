@@ -155,7 +155,11 @@ def export_to_excel(beds, trucks):
                 "Truck #": i + 1,
                 "Num Beds": len(truck),
                 "Total Weight (kg)": sum(b['Weight'] for b in truck),
-                "Panel Types": ", ".join(str(pt) for b in truck for pt in b["Panel Types"])
+                "Panel Types": ", ".join(
+                    str(pt) for b in truck 
+                    if "Panel Types" in b and isinstance(b["Panel Types"], list)
+                    for pt in b["Panel Types"] if pd.notna(pt)
+                )
             })
         pd.DataFrame(truck_summary).to_excel(writer, index=False, sheet_name="Truck Summary")
 
