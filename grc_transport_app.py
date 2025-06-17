@@ -154,6 +154,7 @@ def export_to_excel(beds, trucks):
         pd.DataFrame(beds).to_excel(writer, index=False, sheet_name="Beds")
 
         truck_summary = []
+        st.write("🚧 DEBUG: Trucks data before export", trucks)
         for i, truck in enumerate(trucks):
             truck_summary.append({
                 "Truck #": i + 1,
