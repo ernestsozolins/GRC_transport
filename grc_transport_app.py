@@ -85,8 +85,6 @@ def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buff
             st.error(f"❌ Error parsing PDF match: {e}")
     return panels
 
-
-# --- Parser that uses a user-defined column map ---
 def parse_excel_panels(df, spacing, column_map):
     panels = []
     
@@ -151,7 +149,6 @@ spacing = st.number_input("Panel spacing (mm)", min_value=0, value=100)
 if uploaded_file:
     file_extension = uploaded_file.name.split('.')[-1].lower()
     
-    # --- Handle PDF Data ---
     if file_extension == "pdf":
         analyze_pdf = st.button("Run PDF Analysis")
         if analyze_pdf:
@@ -168,7 +165,6 @@ if uploaded_file:
             except Exception as e:
                  st.error(f"Failed to process PDF file: {e}")
 
-    # --- Handle Tabular Data (Excel or CSV) ---
     elif file_extension in ["xlsx", "csv"]:
         st.header("1. File Settings")
         header_row = st.number_input(
@@ -178,28 +174,24 @@ if uploaded_file:
         )
         
         df = None
-        # --- Step 1: Read the file with robust fallback logic ---
         try:
             if file_extension == "xlsx":
                 try:
                     df = pd.read_excel(uploaded_file, header=header_row)
-                except ValueError as e:
+                except Exception as e:
                     if "Excel file format cannot be determined" in str(e):
-                        st.warning("⚠️ This .xlsx file could not be read as standard Excel. Attempting to read as a CSV file.")
+                        st.warning("⚠️ This file looks like an Excel file but could not be read. Attempting to read it as a CSV instead.")
                         uploaded_file.seek(0)
-                        # FIX: Specify encoding for the fallback CSV read
                         df = pd.read_csv(uploaded_file, header=header_row, encoding='utf-8-sig')
                     else:
                         raise e
-            else: # It's a .csv file
-                # FIX: Specify encoding to handle files with a Byte Order Mark (BOM)
+            else:
                 df = pd.read_csv(uploaded_file, header=header_row, encoding='utf-8-sig')
         except Exception as e:
             st.error(f"Fatal Error Reading File: {e}")
-            st.info("The application cannot continue. Please ensure the 'header row' number is correct and the file is not corrupted.")
+            st.info("The application cannot continue. Please ensure the 'header row' number is correct and that the file is not corrupted or saved in an unusual format.")
             st.stop()
 
-        # --- Step 2: Show preview and mapping UI ---
         st.header("2. Data Preview")
         st.info("Here are the first 5 rows of your data. Use this to verify the correct header was selected.")
         st.dataframe(df.head())
