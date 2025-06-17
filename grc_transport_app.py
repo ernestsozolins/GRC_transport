@@ -194,7 +194,7 @@ if uploaded_file and proceed:
     analyze = st.button("Run Analysis")
     if analyze:
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-            tmp_file.write(uploaded_file.read())
+            tmp_file.write(uploaded_bytes)
             tmp_file_path = tmp_file.name
 
         try:
