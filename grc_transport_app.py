@@ -95,7 +95,7 @@ def parse_excel_panels(df, spacing, column_map):
             h, l, d = h_num + 2 * spacing, l_num + 2 * spacing, d_num + 2 * spacing
 
             weight = 0
-            if wgt_col: 
+            if wgt_col and pd.notna(row[wgt_col]): 
                 weight_num = pd.to_numeric(row[wgt_col], errors='coerce')
                 if pd.notna(weight_num) and weight_num > 0:
                     weight = weight_num
@@ -111,10 +111,58 @@ def parse_excel_panels(df, spacing, column_map):
             st.error(f"❌ An error occurred on row index {index}: {e}")
 
     if not panels:
-         st.warning("Warning: Could not parse any valid panels with the selected columns.")
+         st.warning("Warning: Could not parse any valid panels.")
     return panels
 
-# --- Main Streamlit App ---
+# Refactored function to handle the UI for any dataframe
+def display_ui_and_process(df, spacing):
+    st.header("2. Data Preview")
+    st.info("This preview shows the data after the header has been set. Verify it is correct.")
+    st.dataframe(df.head())
+
+    # Clean column names and prepare for dropdowns
+    df.columns = df.columns.astype(str).str.strip()
+    app_columns = [col for col in df.columns if col.strip() != '']
+
+    st.header("3. Map Your Columns")
+    st.info("The app will try to guess the correct columns. Please verify them.")
+    
+    app_columns_lower = [col.lower() for col in app_columns]
+    def find_default_index(target_name):
+        try: return app_columns_lower.index(target_name)
+        except ValueError: return 0
+
+    col1_map, col2_map = st.columns(2)
+    with col1_map:
+        type_col = st.selectbox("Panel Type/Name Column:", app_columns, index=find_default_index('cast unit'))
+        len_col = st.selectbox("Length (mm) Column:", app_columns, index=find_default_index('length, mm'))
+        wgt_col = st.selectbox("Weight (kg) Column (Optional):", [None] + app_columns)
+    with col2_map:
+        hgt_col = st.selectbox("Height (mm) Column:", app_columns, index=find_default_index('height, mm'))
+        dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns, index=find_default_index('width, mm'))
+
+    st.header("4. Run Analysis")
+    if st.button("Run Analysis with these settings"):
+        column_map = {
+            "panel type": type_col, "length (mm)": len_col,
+            "height (mm)": hgt_col, "depth (mm)": dep_col,
+            "weight (kg)": wgt_col,
+        }
+        panels = parse_excel_panels(df, spacing, column_map)
+        
+        if panels:
+            beds, trucks = compute_beds_and_trucks(panels)
+            st.success(f"Parsed {len(panels)} panels, which fit into {len(beds)} beds and {len(trucks)} trucks.")
+            
+            st.subheader("Bed Summary")
+            st.dataframe(pd.DataFrame(beds))
+            st.subheader("Truck Summary")
+            # Truck summary display logic...
+            output = export_to_excel(beds, trucks)
+            st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
+
+
+# --- Streamlit App ---
 st.set_page_config(page_title="GRC Transport Planner", layout="wide")
 st.title("🚚 GRC Panel Transport & Storage Estimator")
 
@@ -123,7 +171,8 @@ spacing = st.number_input("Panel spacing (mm)", min_value=0, value=100)
 
 if uploaded_file:
     file_extension = uploaded_file.name.split('.')[-1].lower()
-    
+    df = None
+
     if file_extension == "pdf":
         # PDF logic is unchanged
         pass
@@ -131,83 +180,45 @@ if uploaded_file:
     else: # Handle CSV and XLSX files
         st.header("1. File Settings")
         
-        col1_settings, col2_settings = st.columns(2)
-        with col1_settings:
-            header_row = st.number_input("Header Row Number (first row is 0):", min_value=0, value=2)
-        
-        delimiter = None
+        # Delimiter selection only appears for CSV files
+        delimiter = ";" # Default to semicolon
         if file_extension == "csv":
-            with col2_settings:
-                delimiter_options = { "Semicolon (;)": ";", "Comma (,)": ",", "Tab": "\t" }
-                delimiter_choice = st.selectbox("Column Delimiter:", options=list(delimiter_options.keys()))
-                delimiter = delimiter_options[delimiter_choice]
+            delimiter_options = { "Semicolon (;)": ";", "Comma (,)": ",", "Tab": "\t" }
+            delimiter_choice = st.selectbox("Column Delimiter:", options=list(delimiter_options.keys()))
+            delimiter = delimiter_options[delimiter_choice]
 
-        # Use a button to explicitly load and process the file with the chosen settings
-        if st.button("Load and Preview Data"):
-            try:
-                if file_extension == "xlsx":
+        header_row = st.number_input("Which row contains the headers? (First row is 0)", min_value=0, value=2)
+
+        try:
+            df_raw = None
+            # --- FIX: Restored robust logic for reading Excel and CSV files ---
+            if file_extension == "xlsx":
+                try:
                     df_raw = pd.read_excel(uploaded_file, header=None)
-                else: # csv
-                    df_raw = pd.read_csv(uploaded_file, header=None, sep=delimiter, encoding='utf-8-sig', engine='python')
+                except Exception as e:
+                    if "Excel file format cannot be determined" in str(e):
+                        st.warning("⚠️ This file is not a standard Excel file. Attempting to read as a semicolon-delimited CSV.")
+                        uploaded_file.seek(0)
+                        df_raw = pd.read_csv(uploaded_file, header=None, sep=';', encoding='utf-8-sig', engine='python')
+                    else:
+                        raise e
+            else: # csv
+                df_raw = pd.read_csv(uploaded_file, header=None, sep=delimiter, encoding='utf-8-sig', engine='python')
 
-                # Promote the selected row to header
-                new_header = df_raw.iloc[header_row]
-                df = df_raw[header_row + 1:].copy()
-                df.columns = new_header
-                df = df.reset_index(drop=True)
-                
-                # Store the processed dataframe in session state to prevent mismatches
-                st.session_state.df = df
-                st.session_state.file_processed = True
-
-            except Exception as e:
-                st.error(f"Error Reading File: {e}")
-                st.session_state.file_processed = False
-        
-        # Only show the next steps if the file has been successfully processed and stored
-        if 'file_processed' in st.session_state and st.session_state.file_processed:
-            df = st.session_state.df # Retrieve the correct dataframe
-
-            st.header("2. Data Preview")
-            st.info("Here are the first 5 rows of your data. If this looks wrong, please adjust the settings above and click 'Load and Preview Data' again.")
-            st.dataframe(df.head())
-
-            df.columns = df.columns.astype(str).str.strip()
-            app_columns = [col for col in df.columns if col.strip() != '']
-
-            st.header("3. Map Your Columns")
-            st.info("The app will try to guess the correct columns. Please verify them.")
+            # Promote the selected row to header
+            new_header = df_raw.iloc[header_row]
+            df = df_raw[header_row + 1:].copy()
+            df.columns = new_header
+            df = df.reset_index(drop=True)
             
-            app_columns_lower = [col.lower() for col in app_columns]
-            def find_default_index(target_name):
-                try: return app_columns_lower.index(target_name)
-                except ValueError: return 0
+            # Remove initial unnamed index column if it exists
+            if 'unnamed' in str(df.columns[0]).lower():
+                df = df.iloc[:, 1:].copy()
 
-            col1_map, col2_map = st.columns(2)
-            with col1_map:
-                type_col = st.selectbox("Panel Type/Name Column:", app_columns, index=find_default_index('cast unit'))
-                len_col = st.selectbox("Length (mm) Column:", app_columns, index=find_default_index('length, mm'))
-                wgt_col = st.selectbox("Weight (kg) Column (Optional):", [None] + app_columns)
-            with col2_map:
-                hgt_col = st.selectbox("Height (mm) Column:", app_columns, index=find_default_index('height, mm'))
-                dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns, index=find_default_index('width, mm'))
+        except Exception as e:
+            st.error(f"Error Reading File: {e}")
+            st.info("Please ensure the file format, delimiter, and header row number are correct.")
+            st.stop()
 
-            st.header("4. Run Analysis")
-            if st.button("Run Analysis with these settings"):
-                column_map = {
-                    "panel type": type_col, "length (mm)": len_col,
-                    "height (mm)": hgt_col, "depth (mm)": dep_col,
-                    "weight (kg)": wgt_col,
-                }
-                panels = parse_excel_panels(df, spacing, column_map)
-                
-                if panels:
-                    beds, trucks = compute_beds_and_trucks(panels)
-                    st.success(f"Parsed {len(panels)} panels, which fit into {len(beds)} beds and {len(trucks)} trucks.")
-                    
-                    st.subheader("Bed Summary")
-                    st.dataframe(pd.DataFrame(beds))
-                    st.subheader("Truck Summary")
-                    # Display truck summary...
-                    output = export_to_excel(beds, trucks)
-                    st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
+        # Call the common UI function to process the dataframe
+        display_ui_and_process(df, spacing)
