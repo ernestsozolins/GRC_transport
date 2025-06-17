@@ -126,7 +126,7 @@ def compute_beds_and_trucks(panels, bed_width=2400, bed_weight_limit=2500, truck
             'Width': bed_width,
             'Weight': bed_weight,
             'Num Panels': len(bed),
-            'Panel Types': list(set(p['Type'] for p in bed))
+            'Panel Types': list(set(str(p['Type']) for p in bed if pd.notna(p['Type'])))
         })
 
     trucks = []
