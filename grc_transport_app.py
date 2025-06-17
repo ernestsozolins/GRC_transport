@@ -74,7 +74,8 @@ def parse_excel_panels(file_path, spacing=100):
         h = row[column_map["height (mm)"]] + 2 * spacing
         l = row[column_map["length (mm)"]] + 2 * spacing
         d = row[column_map["depth (mm)"]] + 2 * spacing
-        weight = row.get(column_map["weight (kg)"], 0)
+        weight_col = column_map.get("weight (kg)")
+        weight = row[weight_col] if weight_col and weight_col in row and pd.notna(row[weight_col]) else 0
         panels.append({
             "Type": row[column_map["panel type"]],
             "Height": d,
