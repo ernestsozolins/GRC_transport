@@ -39,6 +39,9 @@ def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buff
             except Exception as e:
             st.error(f"❌ Error parsing row: {e}")
             st.write("🚨 Problematic row data:", row.to_dict())
+            except Exception as e:
+            st.error(f"❌ Error parsing row: {e}")
+            st.write("🚨 Problematic row data:", row.to_dict())
     return panels
 
 def fuzzy_match_column(df_columns, target_keywords):
@@ -85,7 +88,7 @@ def parse_excel_panels(file_path, spacing=100, header_row=0):
         raise ValueError(f"Missing required columns: {missing}")
 
     panels = []
-    for _, row in df.iterrows():
+    for _, row in df.iterrows():  # start parsing each row
         try:
         h = row[column_map["height (mm)"]] + 2 * spacing
         l = row[column_map["length (mm)"]] + 2 * spacing
@@ -98,14 +101,14 @@ def parse_excel_panels(file_path, spacing=100, header_row=0):
                     weight = float(val)
             except Exception:
                 weight = 0
-                    panel = {
+                                panel = {
                 "Type": str(row[column_map["panel type"]]) if pd.notna(row[column_map["panel type"]]) else "Unknown",
             "Height": d,
             "Width": l,
             "Depth": h,
                 "Weight": weight
             }
-            panels.append(panel)
+                        panels.append(panel)
     return panels
 
 def compute_beds_and_trucks(panels, bed_width=2400, bed_weight_limit=2500, truck_weight_limit=15000, truck_max_length=13620):
