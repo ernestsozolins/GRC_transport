@@ -46,6 +46,7 @@ def fuzzy_match_column(df_columns, target_keywords):
 
 def parse_excel_panels(file_path, spacing=100, header_row=0):
     df = pd.read_excel(file_path, header=header_row)
+    df.replace(to_replace=r"\s+", value="", regex=True, inplace=True)
     df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
     df.columns = df.columns.str.strip().str.lower()
     colnames = df.columns.tolist()
