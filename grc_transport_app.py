@@ -38,14 +38,28 @@ def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buff
 
 def parse_excel_panels(file_path, spacing=100):
     df = pd.read_excel(file_path)
+    df.columns = df.columns.str.strip().str.lower()
+
+    column_map = {
+        "panel type": "type",
+        "height (mm)": "height",
+        "length (mm)": "length",
+        "depth (mm)": "depth",
+        "weight (kg)": "weight"
+    }
+
+    missing = [col for col in column_map if col.lower() not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
     panels = []
     for _, row in df.iterrows():
-        h = row['Height (mm)'] + 2 * spacing
-        l = row['Length (mm)'] + 2 * spacing
-        d = row['Depth (mm)'] + 2 * spacing
-        weight = row.get('Weight (kg)', 0)
+        h = row[column_map["height (mm)"].lower()] + 2 * spacing
+        l = row[column_map["length (mm)"].lower()] + 2 * spacing
+        d = row[column_map["depth (mm)"].lower()] + 2 * spacing
+        weight = row.get(column_map["weight (kg)"].lower(), 0)
         panels.append({
-            "Type": row['Panel Type'],
+            "Type": row[column_map["panel type"].lower()],
             "Height": d,
             "Width": l,
             "Depth": h,
