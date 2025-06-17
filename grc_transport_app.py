@@ -40,26 +40,35 @@ def parse_excel_panels(file_path, spacing=100):
     df = pd.read_excel(file_path)
     df.columns = df.columns.str.strip().str.lower()
 
-    column_map = {
-        "panel type": "type",
-        "height (mm)": "height",
-        "length (mm)": "length",
-        "depth (mm)": "depth",
-        "weight (kg)": "weight"
+    # Attempt to map expected keys to actual file columns
+    possible_keys = {
+        "panel type": ["panel type", "type", "cast_unit"],
+        "height (mm)": ["height (mm)", "height", "augstums"],
+        "length (mm)": ["length (mm)", "length", "garums"],
+        "depth (mm)": ["depth (mm)", "depth", "platums"],
+        "weight (kg)": ["weight (kg)", "weight", "svars"]
     }
 
-    missing = [col for col in column_map if col.lower() not in df.columns]
+    column_map = {}
+    missing = []
+    for key, options in possible_keys.items():
+        found = next((col for col in options if col in df.columns), None)
+        if found:
+            column_map[key] = found
+        else:
+            missing.append(key)
+
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
 
     panels = []
     for _, row in df.iterrows():
-        h = row[column_map["height (mm)"].lower()] + 2 * spacing
-        l = row[column_map["length (mm)"].lower()] + 2 * spacing
-        d = row[column_map["depth (mm)"].lower()] + 2 * spacing
-        weight = row.get(column_map["weight (kg)"].lower(), 0)
+        h = row[column_map["height (mm)"]] + 2 * spacing
+        l = row[column_map["length (mm)"]] + 2 * spacing
+        d = row[column_map["depth (mm)"]] + 2 * spacing
+        weight = row.get(column_map["weight (kg)"], 0)
         panels.append({
-            "Type": row[column_map["panel type"].lower()],
+            "Type": row[column_map["panel type"]],
             "Height": d,
             "Width": l,
             "Depth": h,
@@ -143,23 +152,25 @@ uploaded_file = st.file_uploader("Upload a PDF or Excel File", type=["pdf", "xls
 spacing = st.number_input("Panel spacing (mm)", min_value=0, value=100)
 
 if uploaded_file:
-    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-        tmp_file.write(uploaded_file.read())
-        tmp_file_path = tmp_file.name
+    analyze = st.button("Analyze")
+    if analyze:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+            tmp_file.write(uploaded_file.read())
+            tmp_file_path = tmp_file.name
 
-    try:
-        if uploaded_file.name.endswith(".pdf"):
-            panels = parse_pdf_panels(tmp_file_path, spacing)
-        else:
-            panels = parse_excel_panels(tmp_file_path, spacing)
+        try:
+            if uploaded_file.name.endswith(".pdf"):
+                panels = parse_pdf_panels(tmp_file_path, spacing)
+            else:
+                panels = parse_excel_panels(tmp_file_path, spacing)
 
-        beds, trucks = compute_beds_and_trucks(panels)
-        st.success(f"Parsed {len(panels)} panels, {len(beds)} beds, {len(trucks)} trucks")
+            beds, trucks = compute_beds_and_trucks(panels)
+            st.success(f"Parsed {len(panels)} panels, {len(beds)} beds, {len(trucks)} trucks")
 
-        output = export_to_excel(beds, trucks)
-        st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            output = export_to_excel(beds, trucks)
+            st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    except Exception as e:
-        st.error(f"Error processing file: {e}")
+        except Exception as e:
+            st.error(f"Error processing file: {e}")
 else:
     st.info("Upload a file to begin.")
