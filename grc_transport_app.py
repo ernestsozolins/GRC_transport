@@ -149,68 +149,63 @@ if uploaded_file:
     elif file_extension == "csv":
         st.header("1. File Settings")
         
-        col1_settings, col2_settings = st.columns(2)
-        with col1_settings:
-            header_row = st.number_input(
-                "Select the header row (the first row is 0):",
-                min_value=0, max_value=20, value=2,
-                help="This should be the row with names like 'cast unit', 'length, mm', etc."
-            )
-        with col2_settings:
-            delimiter_options = { "Comma": ",", "Semicolon": ";", "Tab": "\t" }
-            delimiter_choice = st.selectbox(
-                "Select column delimiter:",
-                options=list(delimiter_options.keys())
-            )
+        # --- FIX: New robust 2-step header identification ---
+        delimiter_options = { "Comma": ",", "Semicolon": ";", "Tab": "\t" }
+        delimiter_choice = st.selectbox(
+            "Select column delimiter:",
+            options=list(delimiter_options.keys())
+        )
         
-        df = None
+        df_raw = None
         try:
             delimiter = delimiter_options[delimiter_choice]
-            df = pd.read_csv(
-                uploaded_file, header=header_row, encoding='utf-8-sig',
-                sep=delimiter, engine='python', index_col=0 
+            # Step 1: Read the file as raw data with no header
+            df_raw = pd.read_csv(
+                uploaded_file,
+                header=None, # Read with no header first
+                encoding='utf-8-sig',
+                sep=delimiter,
+                engine='python'
             )
         except Exception as e:
             st.error(f"Error Reading CSV File: {e}")
-            st.info("Please ensure the 'header row' and 'delimiter' are correct.")
+            st.info("Please ensure the delimiter is correct.")
             st.stop()
 
-        st.header("2. Data Preview")
-        st.info("Here are the first 5 rows of your data. Use this to verify the correct header was selected.")
+        st.header("2. Identify Header and Preview Data")
+        st.info("Below is a raw preview of your file. Please identify the row number that contains your column headers (e.g., 'cast unit').")
+        st.dataframe(df_raw.head(10))
+
+        # Step 2: Let the user specify which row is the header
+        header_row = st.number_input(
+            "Which row number contains the headers? (The first row is 0)",
+            min_value=0, max_value=20, value=2
+        )
+
+        # Step 3: Create the final dataframe with the correct header
+        df = df_raw.copy()
+        new_header = df.iloc[header_row]
+        df = df[header_row + 1:]
+        df.columns = new_header
+        df = df.reset_index(drop=True)
+        
+        st.subheader("Corrected Data Preview")
         st.dataframe(df.head())
 
-        df.columns = df.columns.str.strip()
+        df.columns = df.columns.astype(str).str.strip()
         app_columns = [col for col in df.columns if col is not None and str(col).strip() != '']
 
         st.header("3. Map Your Columns")
         st.info("Select which column from your file corresponds to each required data field.")
         
-        # --- FIX: Robustly find default indexes for selectboxes ---
-        app_columns_lower = [str(c).lower() for c in app_columns]
-
-        def find_default_index(target_name):
-            try:
-                # Find the index of the target in the lowercase list
-                return app_columns_lower.index(target_name)
-            except ValueError:
-                # Default to the first column if not found
-                return 0
-
-        type_idx = find_default_index('cast unit')
-        len_idx = find_default_index('length, mm')
-        hgt_idx = find_default_index('height, mm')
-        dep_idx = find_default_index('width, mm')
-        # --- End Fix ---
-
         col1_map, col2_map = st.columns(2)
         with col1_map:
-            # Re-introduce the 'index' parameter with the safely calculated index
-            type_col = st.selectbox("Panel Type/Name Column:", app_columns, index=type_idx)
-            len_col = st.selectbox("Length (mm) Column:", app_columns, index=len_idx)
-            wgt_col = st.selectbox("Weight (kg) Column (Optional):", [None] + app_columns)
+            type_col = st.selectbox("Panel Type/Name Column:", app_columns, key="type_col")
+            len_col = st.selectbox("Length (mm) Column:", app_columns, key="len_col")
+            wgt_col = st.selectbox("Weight (kg) Column (Optional):", [None] + app_columns, key="wgt_col")
         with col2_map:
-            hgt_col = st.selectbox("Height (mm) Column:", app_columns, index=hgt_idx)
-            dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns, index=dep_idx)
+            hgt_col = st.selectbox("Height (mm) Column:", app_columns, key="hgt_col")
+            dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns, key="dep_col")
 
         st.header("4. Run Analysis")
         analyze_data = st.button("Run Analysis with these settings")
