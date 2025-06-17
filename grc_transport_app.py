@@ -8,40 +8,84 @@ import xlsxwriter
 import difflib
 
 # --- Parsing Logic ---
-def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buffer=0.10):
+def parse_excel_panels(file_path, spacing=100, header_row=0):
+    df = pd.read_excel(file_path, header=header_row)
+    df.replace(to_replace=r"\s+", value="", regex=True, inplace=True)
+    df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+    df.columns = df.columns.str.strip().str.lower()
+    colnames = df.columns.tolist()
+    st.write("Detected columns:", colnames)
+
+    column_map = {}
+    targets = {
+        "panel type": ["panel type", "type", "cast unit", "cast_unit"],
+        "height (mm)": ["height", "height (mm)", "augstums"],
+        "length (mm)": ["length", "length (mm)", "garums"],
+        "depth (mm)": ["depth", "depth (mm)", "platums"],
+        "weight (kg)": ["weight", "weight (kg)", "svars"]
+    }
+
+    required_keys = ["panel type", "height (mm)", "length (mm)", "depth (mm)"]
+    optional_keys = ["weight (kg)"]
+
+    missing = []
+    for key in required_keys:
+        match = fuzzy_match_column(colnames, targets[key])
+        if match:
+            column_map[key] = match
+        else:
+            missing.append(key)
+
+    for key in optional_keys:
+        match = fuzzy_match_column(colnames, targets[key])
+        if match:
+            column_map[key] = match
+
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
     panels = []
-    with pdfplumber.open(file_path) as pdf:
-        text = "\n".join(page.extract_text() for page in pdf.pages if page.extract_text())
-
-    pattern = re.compile(r"(Grc\.[\w\.]+)\s+(\d+)\s+(\d{3,4})\s+(\d{3,4})\s+(\d{3,4})")
-    matches = pattern.findall(text)
-
-    def estimate_weight(length_mm, height_mm):
-        area_m2 = (length_mm / 1000) * (height_mm / 1000)
-        volume_m3 = area_m2 * thickness
-        return round(volume_m3 * density * (1 + buffer), 2)
-
-    # FIX: The try/except block was incorrectly structured.
-    # It should be inside the loop to catch errors for each matched panel group.
-    for match_data in matches:
+    # FIX: The logic inside the loop is now more robust to handle bad data.
+    for index, row in df.iterrows():
         try:
-            panel_type, qty, height, length, depth = match_data
-            for _ in range(int(qty)):
-                h = int(height) + 2 * spacing
-                l = int(length) + 2 * spacing
-                d = int(depth) + 2 * spacing
-                weight = estimate_weight(int(length), int(height))
-                panels.append({
-                    "Type": panel_type,
-                    "Height": d,
-                    "Width": l,
-                    "Depth": h,
-                    "Weight": weight
-                })
+            # --- FIX 1: Safely convert required dimensions to numbers ---
+            # pd.to_numeric will turn empty strings and other non-numbers into NaN (Not a Number)
+            h_num = pd.to_numeric(row[column_map["height (mm)"]], errors='coerce')
+            l_num = pd.to_numeric(row[column_map["length (mm)"]], errors='coerce')
+            d_num = pd.to_numeric(row[column_map["depth (mm)"]], errors='coerce')
+
+            # --- FIX 2: Skip rows if essential data is missing or not a number ---
+            if pd.isna(h_num) or pd.isna(l_num) or pd.isna(d_num):
+                # Using the DataFrame index and header_row to give a helpful row number from the file
+                st.warning(f"⚠️ Skipping row {index + header_row + 2} due to missing/invalid dimension values.")
+                continue  # Go to the next row
+
+            # If we get here, we have valid numbers. Now we can do the math.
+            h = h_num + 2 * spacing
+            l = l_num + 2 * spacing
+            d = d_num + 2 * spacing
+            weight = 0
+
+            if "weight (kg)" in column_map:
+                # Also use the safe conversion for the optional weight column
+                weight_val = pd.to_numeric(row[column_map["weight (kg)"]], errors='coerce')
+                # If conversion is successful (not NaN), use the value. Otherwise, weight remains 0.
+                if pd.notna(weight_val):
+                    weight = weight_val
+
+            panel = {
+                "Type": str(row[column_map["panel type"]]) if pd.notna(row[column_map["panel type"]]) else "Unknown",
+                "Height": d,
+                "Width": l,
+                "Depth": h,
+                "Weight": weight
+            }
+            panels.append(panel)
+
         except Exception as e:
-            st.error(f"❌ Error parsing PDF match: {e}")
-            # FIX: Changed 'row.to_dict()' to 'match_data' which is the correct variable here.
-            st.write("🚨 Problematic match data:", match_data)
+            # FIX 3: Improved error message with the specific row index
+            st.error(f"❌ Error parsing row at Excel index {index + header_row + 2}: {e}")
+            st.write("🚨 Problematic row data:", row.to_dict())
     return panels
 
 
