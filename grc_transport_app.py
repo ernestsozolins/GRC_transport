@@ -86,7 +86,7 @@ def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buff
     return panels
 
 
-# --- Parser that uses a user-defined column map ---
+# --- Parser with new filtering logic ---
 def parse_excel_panels(df, spacing, column_map):
     panels = []
     
@@ -102,6 +102,12 @@ def parse_excel_panels(df, spacing, column_map):
 
     for index, row in df.iterrows():
         try:
+            # FIX: New filtering logic to skip rows with empty panel type
+            panel_type_value = row.get(type_col)
+            # Check for NaN, None, empty string, or whitespace-only string
+            if pd.isna(panel_type_value) or str(panel_type_value).strip() == "":
+                continue # Skip this row and move to the next one
+
             l_num = pd.to_numeric(row[len_col], errors='coerce')
             h_num = pd.to_numeric(row[hgt_col], errors='coerce')
             d_num = pd.to_numeric(row[dep_col], errors='coerce')
@@ -185,7 +191,6 @@ if uploaded_file:
             st.info("The application cannot continue. Please ensure the 'header row' number is correct.")
             st.stop()
 
-        # --- FIX: New UI Flow ---
         # Step 2: Show a preview of the data
         st.header("2. Data Preview")
         st.info("Here are the first 5 rows of your data. Use this to verify the correct header was selected.")
