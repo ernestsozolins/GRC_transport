@@ -194,7 +194,9 @@ if uploaded_file:
     if uploaded_file.name.endswith(".xlsx"):
         try:
             preview_df = pd.read_excel(tmp_file_path, header=None, nrows=5)
-            st.subheader("Preview First Rows")
+            preview_df.replace(to_replace=r"\s+", value="", regex=True, inplace=True)
+            preview_df = preview_df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+            st.subheader("Preview First Rows (cleaned)")
             st.dataframe(preview_df)
             header_row = st.number_input("Select header row (0-indexed)", min_value=0, max_value=10, value=1)
             analyze = st.button("Run Analysis")
