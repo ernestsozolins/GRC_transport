@@ -10,7 +10,6 @@ import difflib
 # --- Parsing Logic ---
 def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buffer=0.10):
     panels = []
-    st.write("--- Debugging Excel Rows ---")
     with pdfplumber.open(file_path) as pdf:
         text = "\n".join(page.extract_text() for page in pdf.pages if page.extract_text())
 
@@ -22,27 +21,29 @@ def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buff
         volume_m3 = area_m2 * thickness
         return round(volume_m3 * density * (1 + buffer), 2)
 
-    for panel_type, qty, height, length, depth in matches:
-        for _ in range(int(qty)):
-            h = int(height) + 2 * spacing
-            l = int(length) + 2 * spacing
-            d = int(depth) + 2 * spacing
-            weight = estimate_weight(int(length), int(height))
-            panels.append({
-                "Type": panel_type,
+    # FIX: The try/except block was incorrectly structured.
+    # It should be inside the loop to catch errors for each matched panel group.
+    for match_data in matches:
+        try:
+            panel_type, qty, height, length, depth = match_data
+            for _ in range(int(qty)):
+                h = int(height) + 2 * spacing
+                l = int(length) + 2 * spacing
+                d = int(depth) + 2 * spacing
+                weight = estimate_weight(int(length), int(height))
+                panels.append({
+                    "Type": panel_type,
                     "Height": d,
                     "Width": l,
                     "Depth": h,
-                "Weight": weight
-            })
-
-            except Exception as e:
-            st.error(f"❌ Error parsing row: {e}")
-            st.write("🚨 Problematic row data:", row.to_dict())
-            except Exception as e:
-            st.error(f"❌ Error parsing row: {e}")
-            st.write("🚨 Problematic row data:", row.to_dict())
+                    "Weight": weight
+                })
+        except Exception as e:
+            st.error(f"❌ Error parsing PDF match: {e}")
+            # FIX: Changed 'row.to_dict()' to 'match_data' which is the correct variable here.
+            st.write("🚨 Problematic match data:", match_data)
     return panels
+
 
 def fuzzy_match_column(df_columns, target_keywords):
     for target in target_keywords:
@@ -82,33 +83,41 @@ def parse_excel_panels(file_path, spacing=100, header_row=0):
     for key in optional_keys:
         match = fuzzy_match_column(colnames, targets[key])
         if match:
-            column_map[key] = match  # optional weight
+            column_map[key] = match
 
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
 
     panels = []
-    for _, row in df.iterrows():  # start parsing each row
+    # FIX: The whole 'for' loop body was rewritten to fix major indentation and logic errors.
+    # Now, the entire processing for a single row is wrapped in one try/except block.
+    for _, row in df.iterrows():
         try:
             h = row[column_map["height (mm)"]] + 2 * spacing
-                    l = row[column_map["length (mm)"]] + 2 * spacing
-                    d = row[column_map["depth (mm)"]] + 2 * spacing
-                    weight = 0
-        if "weight (kg)" in column_map:
-            try:
-                                    val = row[column_map["weight (kg)"]]
+            l = row[column_map["length (mm)"]] + 2 * spacing
+            d = row[column_map["depth (mm)"]] + 2 * spacing
+            weight = 0
+
+            if "weight (kg)" in column_map:
+                val = row[column_map["weight (kg)"]]
                 if pd.notna(val) and not isinstance(val, pd.Series):
-                                            weight = float(val)
-            except Exception:
-                weight = 0
-                                            panel = {
+                    # A nested try/except is fine for handling the specific float conversion
+                    try:
+                        weight = float(val)
+                    except (ValueError, TypeError):
+                        weight = 0 # If conversion fails, weight remains 0
+
+            panel = {
                 "Type": str(row[column_map["panel type"]]) if pd.notna(row[column_map["panel type"]]) else "Unknown",
-            "Height": d,
-            "Width": l,
-            "Depth": h,
+                "Height": d,
+                "Width": l,
+                "Depth": h,
                 "Weight": weight
             }
-                                    panels.append(panel)
+            panels.append(panel)
+        except Exception as e:
+            st.error(f"❌ Error parsing row: {e}")
+            st.write("🚨 Problematic row data:", row.to_dict())
     return panels
 
 def compute_beds_and_trucks(panels, bed_width=2400, bed_weight_limit=2500, truck_weight_limit=15000, truck_max_length=13620):
@@ -165,7 +174,6 @@ def export_to_excel(beds, trucks):
         pd.DataFrame(beds).to_excel(writer, index=False, sheet_name="Beds")
 
         truck_summary = []
-        st.write("🚧 DEBUG: Trucks data before export", trucks)
         for i, truck in enumerate(trucks):
             truck_summary.append({
                 "Truck #": i + 1,
@@ -195,17 +203,16 @@ st.set_page_config(page_title="GRC Transport Planner", layout="wide")
 st.title("🚚 GRC Panel Transport & Storage Estimator")
 
 uploaded_file = st.file_uploader("Upload a PDF or Excel File", type=["pdf", "xlsx"])
-uploaded_bytes = uploaded_file.read() if uploaded_file else None
 spacing = st.number_input("Panel spacing (mm)", min_value=0, value=100)
 
 if uploaded_file:
-    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-        tmp_file.write(uploaded_bytes)
-        tmp_file_path = tmp_file.name
-
+    # We read the file into memory once to avoid issues with temp files
+    uploaded_bytes = uploaded_file.getvalue()
+    
     if uploaded_file.name.endswith(".xlsx"):
         try:
-            preview_df = pd.read_excel(tmp_file_path, header=None, nrows=5)
+            # Use BytesIO to read the in-memory bytes
+            preview_df = pd.read_excel(io.BytesIO(uploaded_bytes), header=None, nrows=5)
             preview_df.replace(to_replace=r"\s+", value="", regex=True, inplace=True)
             preview_df = preview_df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
             st.subheader("Preview First Rows (cleaned)")
@@ -214,7 +221,8 @@ if uploaded_file:
             analyze = st.button("Run Analysis")
 
             if analyze:
-                panels = parse_excel_panels(tmp_file_path, spacing, header_row=header_row)
+                # Pass the in-memory bytes to the parsing function
+                panels = parse_excel_panels(io.BytesIO(uploaded_bytes), spacing, header_row=header_row)
                 beds, trucks = compute_beds_and_trucks(panels)
                 st.success(f"Parsed {len(panels)} panels, {len(beds)} beds, {len(trucks)} trucks")
 
@@ -222,9 +230,15 @@ if uploaded_file:
                 st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         except Exception as e:
             st.error(f"Error processing Excel: {e}")
-    else:
+    else: # Handles PDF
         analyze = st.button("Run Analysis")
         if analyze:
+            # Using a temporary file is still a good approach for libraries like pdfplumber
+            # that expect a file path.
+            with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                tmp_file.write(uploaded_bytes)
+                tmp_file_path = tmp_file.name
+            
             try:
                 panels = parse_pdf_panels(tmp_file_path, spacing)
                 beds, trucks = compute_beds_and_trucks(panels)
@@ -234,5 +248,3 @@ if uploaded_file:
                 st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             except Exception as e:
                 st.error(f"Error processing PDF: {e}")
-
-
