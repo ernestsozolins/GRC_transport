@@ -4,7 +4,6 @@ import io
 import tempfile
 import pdfplumber
 import re
-import xlsxwriter
 
 # --- Core Logic Functions (Unchanged) ---
 def compute_beds_and_trucks(panels, bed_width=2400, bed_weight_limit=2500, truck_weight_limit=15000, truck_max_length=13620):
@@ -46,6 +45,7 @@ def compute_beds_and_trucks(panels, bed_width=2400, bed_weight_limit=2500, truck
 
 def export_to_excel(beds, trucks):
     output = io.BytesIO()
+    # Using xlsxwriter for creating the Excel file in memory
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         pd.DataFrame(beds).to_excel(writer, index=False, sheet_name="Beds")
         truck_summary = []
@@ -85,26 +85,22 @@ def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buff
             st.error(f"❌ Error parsing PDF match: {e}")
     return panels
 
-
-# --- NEW PARSER that uses a user-defined column map ---
+# --- Parser that uses a user-defined column map ---
 def parse_excel_panels(df, spacing, column_map):
     panels = []
     
-    # Get column names from the user-provided map
     type_col = column_map["panel type"]
     len_col = column_map["length (mm)"]
     hgt_col = column_map["height (mm)"]
     dep_col = column_map["depth (mm)"]
-    wgt_col = column_map.get("weight (kg)") # Optional
+    wgt_col = column_map.get("weight (kg)")
 
-    # Check if all required columns were mapped by the user
     if not all([type_col, len_col, hgt_col, dep_col]):
         st.error("Error: Please map all required dimension columns (Type, Length, Height, Depth).")
         return []
 
     for index, row in df.iterrows():
         try:
-            # Directly try to convert the essential dimension columns to numbers
             l_num = pd.to_numeric(row[len_col], errors='coerce')
             h_num = pd.to_numeric(row[hgt_col], errors='coerce')
             d_num = pd.to_numeric(row[dep_col], errors='coerce')
@@ -117,13 +113,11 @@ def parse_excel_panels(df, spacing, column_map):
             d = d_num + 2 * spacing
 
             weight = 0
-            # Use weight column if it was mapped and contains a valid number
             if wgt_col: 
                 weight_num = pd.to_numeric(row[wgt_col], errors='coerce')
                 if pd.notna(weight_num) and weight_num > 0:
                     weight = weight_num
             
-            # If weight is still 0 (not provided or invalid), estimate it
             if weight == 0:
                 thickness, density, buffer = 0.016, 2100, 0.10
                 area_m2 = (l_num / 1000) * (h_num / 1000)
@@ -152,18 +146,42 @@ spacing = st.number_input("Panel spacing (mm)", min_value=0, value=100)
 if uploaded_file:
     file_extension = uploaded_file.name.split('.')[-1].lower()
     
-    try:
-        # --- Handle Tabular Data (Excel or CSV) ---
-        if file_extension in ["xlsx", "csv"]:
-            st.header("1. File Settings")
-            header_row = st.number_input("Select the header row (the first row of your data is 0)", min_value=0, max_value=20, value=2)
-            
-            # Read only columns A through I as requested
+    # --- Handle PDF Data ---
+    if file_extension == "pdf":
+        analyze_pdf = st.button("Run PDF Analysis")
+        if analyze_pdf:
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                    tmp_file.write(uploaded_file.getvalue())
+                    tmp_file_path = tmp_file.name
+                panels = parse_pdf_panels(tmp_file_path, spacing)
+                if panels:
+                    beds, trucks = compute_beds_and_trucks(panels)
+                    st.success(f"Parsed {len(panels)} panels, which fit into {len(beds)} beds and {len(trucks)} trucks.")
+                    output = export_to_excel(beds, trucks)
+                    st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
+            except Exception as e:
+                 st.error(f"Failed to process PDF file: {e}")
+
+    # --- Handle Tabular Data (Excel or CSV) ---
+    elif file_extension in ["xlsx", "csv"]:
+        st.header("1. File Settings")
+        header_row = st.number_input("Select the header row (the first row of your data is 0)", min_value=0, max_value=20, value=2)
+        
+        df = None
+        # --- Step 1: Read the file ---
+        try:
             if file_extension == "xlsx":
                 df = pd.read_excel(uploaded_file, header=header_row, usecols='A:I')
             else: # "csv"
                 df = pd.read_csv(uploaded_file, header=header_row, usecols=range(9))
-            
+        except Exception as e:
+            st.error(f"Error Reading File: {e}")
+            st.info("Please ensure the 'header row' number is correct. This should be the row containing column names like 'cast unit', 'length, mm', etc.")
+
+        # --- Step 2: If file was read successfully, show the mapping UI ---
+        if df is not None and not df.empty:
+            st.success("File read successfully. Please map your columns below.")
             df.columns = df.columns.str.strip()
             app_columns = df.columns.tolist()
 
@@ -172,7 +190,6 @@ if uploaded_file:
             
             col1, col2 = st.columns(2)
             with col1:
-                # Attempt to pre-select a logical default if the column name exists
                 type_idx = app_columns.index('cast unit') if 'cast unit' in app_columns else 0
                 type_col = st.selectbox("Panel Type/Name Column:", app_columns, index=type_idx)
                 
@@ -192,36 +209,22 @@ if uploaded_file:
             analyze_data = st.button("Run Analysis with these settings")
 
             if analyze_data:
-                column_map = {
-                    "panel type": type_col,
-                    "length (mm)": len_col,
-                    "height (mm)": hgt_col,
-                    "depth (mm)": dep_col,
-                    "weight (kg)": wgt_col,
-                }
-                panels = parse_excel_panels(df, spacing, column_map)
-                
-                if panels:
-                    beds, trucks = compute_beds_and_trucks(panels)
-                    st.success(f"Parsed {len(panels)} panels, which fit into {len(beds)} beds and {len(trucks)} trucks.")
-                    output = export_to_excel(beds, trucks)
-                    st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
-
-        # --- Handle PDF Data ---
-        elif file_extension == "pdf":
-            analyze_pdf = st.button("Run PDF Analysis")
-            if analyze_pdf:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-                    tmp_file.write(uploaded_file.getvalue())
-                    tmp_file_path = tmp_file.name
-                panels = parse_pdf_panels(tmp_file_path, spacing)
-                beds, trucks = compute_beds_and_trucks(panels)
-                st.success(f"Parsed {len(panels)} panels, which fit into {len(beds)} beds and {len(trucks)} trucks.")
-                output = export_to_excel(beds, trucks)
-                st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
-        else:
-            st.error("Unsupported file type. Please upload a PDF, XLSX, or CSV file.")
-
-    except Exception as e:
-        st.error(f"An error occurred during file processing: {e}")
-        st.info("Please check that the selected header row is correct and the file format is not corrupted.")
+                try:
+                    column_map = {
+                        "panel type": type_col,
+                        "length (mm)": len_col,
+                        "height (mm)": hgt_col,
+                        "depth (mm)": dep_col,
+                        "weight (kg)": wgt_col,
+                    }
+                    panels = parse_excel_panels(df, spacing, column_map)
+                    
+                    if panels:
+                        beds, trucks = compute_beds_and_trucks(panels)
+                        st.success(f"Parsed {len(panels)} panels, which fit into {len(beds)} beds and {len(trucks)} trucks.")
+                        output = export_to_excel(beds, trucks)
+                        st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
+                except Exception as e:
+                    st.error(f"An error occurred during analysis: {e}")
+    else:
+        st.error("Unsupported file type. Please upload a PDF, XLSX, or CSV file.")
