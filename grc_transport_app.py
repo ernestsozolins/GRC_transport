@@ -121,12 +121,18 @@ def compute_beds_and_trucks(panels, bed_width=2400, bed_weight_limit=2500, truck
         bed_length = max(p['Width'] for p in bed)
         bed_height = max(p['Height'] for p in bed)
         bed_weight = sum(p['Weight'] for p in bed)
+        panel_types = [
+            str(p['Type']).strip()
+            for p in bed
+            if pd.notna(p['Type']) and isinstance(p['Type'], str) and str(p['Type']).strip().lower() not in ("", "nan", "none")
+        ]
         bed_summaries.append({
             'Length': bed_length,
             'Height': bed_height,
             'Width': bed_width,
             'Weight': bed_weight,
             'Num Panels': len(bed),
+            'Panel Types': panel_types,
             panel_types = [
             str(p['Type']).strip()
             for p in bed
