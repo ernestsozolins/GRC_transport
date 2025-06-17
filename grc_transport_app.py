@@ -5,42 +5,8 @@ import tempfile
 import pdfplumber
 import re
 import xlsxwriter
-import difflib
 
-# --- Parsing Logic ---
-# (Functions outside of parse_excel_panels are unchanged)
-def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buffer=0.10):
-    panels = []
-    with pdfplumber.open(file_path) as pdf:
-        text = "\n".join(page.extract_text() for page in pdf.pages if page.extract_text())
-    pattern = re.compile(r"(Grc\.[\w\.]+)\s+(\d+)\s+(\d{3,4})\s+(\d{3,4})\s+(\d{3,4})")
-    matches = pattern.findall(text)
-    def estimate_weight(length_mm, height_mm):
-        area_m2 = (length_mm / 1000) * (height_mm / 1000)
-        volume_m3 = area_m2 * thickness
-        return round(volume_m3 * density * (1 + buffer), 2)
-    for match_data in matches:
-        try:
-            panel_type, qty, height, length, depth = match_data
-            for _ in range(int(qty)):
-                h = int(height) + 2 * spacing
-                l = int(length) + 2 * spacing
-                d = int(depth) + 2 * spacing
-                weight = estimate_weight(int(length), int(height))
-                panels.append({
-                    "Type": panel_type, "Height": d, "Width": l, "Depth": h, "Weight": weight
-                })
-        except Exception as e:
-            st.error(f"❌ Error parsing PDF match: {e}")
-    return panels
-
-def fuzzy_match_column(df_columns, target_keywords):
-    for target in target_keywords:
-        match = difflib.get_close_matches(target, df_columns, n=1, cutoff=0.6)
-        if match:
-            return match[0]
-    return None
-
+# --- Core Logic Functions (Unchanged) ---
 def compute_beds_and_trucks(panels, bed_width=2400, bed_weight_limit=2500, truck_weight_limit=15000, truck_max_length=13620):
     beds = []
     for panel in panels:
@@ -94,37 +60,55 @@ def export_to_excel(beds, trucks):
     output.seek(0)
     return output
 
-
-# --- SIMPLIFIED PARSER per user request ---
-def parse_excel_panels(df, spacing=100):
-    # This simplified version only looks for single numeric values in the dimension columns.
-    # It will skip rows with multi-part dimension strings.
-    df.columns = df.columns.str.strip().str.lower()
-    colnames = df.columns.tolist()
-
-    column_map = {}
-    # The targets no longer include fallbacks like 'name' or 'dimensions'
-    targets = {
-        "panel type": ["panel type", "type", "cast unit", "cast_unit"],
-        "height (mm)": ["height", "height (mm)", "augstums"],
-        "length (mm)": ["length", "length (mm)", "garums"],
-        "depth (mm)": ["depth", "depth (mm)", "platums", "width"],
-        "weight (kg)": ["weight", "weight (kg)", "svars"],
-    }
-    
-    for key, potential_names in targets.items():
-        match = fuzzy_match_column(colnames, potential_names)
-        if match: column_map[key] = match
-
+def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buffer=0.10):
     panels = []
+    with pdfplumber.open(file_path) as pdf:
+        text = "\n".join(page.extract_text() for page in pdf.pages if page.extract_text())
+    pattern = re.compile(r"(Grc\.[\w\.]+)\s+(\d+)\s+(\d{3,4})\s+(\d{3,4})\s+(\d{3,4})")
+    matches = pattern.findall(text)
+    def estimate_weight(length_mm, height_mm):
+        area_m2 = (length_mm / 1000) * (height_mm / 1000)
+        volume_m3 = area_m2 * thickness
+        return round(volume_m3 * density * (1 + buffer), 2)
+    for match_data in matches:
+        try:
+            panel_type, qty, height, length, depth = match_data
+            for _ in range(int(qty)):
+                h = int(height) + 2 * spacing
+                l = int(length) + 2 * spacing
+                d = int(depth) + 2 * spacing
+                weight = estimate_weight(int(length), int(height))
+                panels.append({
+                    "Type": panel_type, "Height": d, "Width": l, "Depth": h, "Weight": weight
+                })
+        except Exception as e:
+            st.error(f"❌ Error parsing PDF match: {e}")
+    return panels
+
+
+# --- NEW PARSER that uses a user-defined column map ---
+def parse_excel_panels(df, spacing, column_map):
+    panels = []
+    
+    # Get column names from the user-provided map
+    type_col = column_map["panel type"]
+    len_col = column_map["length (mm)"]
+    hgt_col = column_map["height (mm)"]
+    dep_col = column_map["depth (mm)"]
+    wgt_col = column_map.get("weight (kg)") # Optional
+
+    # Check if all required columns were mapped by the user
+    if not all([type_col, len_col, hgt_col, dep_col]):
+        st.error("Error: Please map all required dimension columns (Type, Length, Height, Depth).")
+        return []
+
     for index, row in df.iterrows():
         try:
             # Directly try to convert the essential dimension columns to numbers
-            l_num = pd.to_numeric(row.get(column_map.get("length (mm)")), errors='coerce')
-            h_num = pd.to_numeric(row.get(column_map.get("height (mm)")), errors='coerce')
-            d_num = pd.to_numeric(row.get(column_map.get("depth (mm)")), errors='coerce')
+            l_num = pd.to_numeric(row[len_col], errors='coerce')
+            h_num = pd.to_numeric(row[hgt_col], errors='coerce')
+            d_num = pd.to_numeric(row[dep_col], errors='coerce')
 
-            # If any dimension is not a valid number, skip this row.
             if pd.isna(l_num) or pd.isna(h_num) or pd.isna(d_num):
                 continue
             
@@ -132,26 +116,29 @@ def parse_excel_panels(df, spacing=100):
             l = l_num + 2 * spacing
             d = d_num + 2 * spacing
 
-            # --- Weight Calculation ---
             weight = 0
-            weight_num = pd.to_numeric(row.get(column_map.get("weight (kg)")), errors='coerce')
-            if pd.notna(weight_num) and weight_num > 0:
-                weight = weight_num
-            else:
+            # Use weight column if it was mapped and contains a valid number
+            if wgt_col: 
+                weight_num = pd.to_numeric(row[wgt_col], errors='coerce')
+                if pd.notna(weight_num) and weight_num > 0:
+                    weight = weight_num
+            
+            # If weight is still 0 (not provided or invalid), estimate it
+            if weight == 0:
                 thickness, density, buffer = 0.016, 2100, 0.10
                 area_m2 = (l_num / 1000) * (h_num / 1000)
                 volume_m3 = area_m2 * (d_num / 1000 if d_num > 5 else thickness)
                 weight = round(volume_m3 * density * (1 + buffer), 2)
 
             panels.append({
-                "Type": str(row.get(column_map.get("panel type", "Unknown"))),
+                "Type": str(row[type_col]),
                 "Height": d, "Width": l, "Depth": h, "Weight": weight
             })
         except Exception as e:
             st.error(f"❌ An error occurred on row index {index}: {e}")
 
     if not panels:
-         st.warning("Warning: Could not parse any valid panel data. This may be because no rows contained individual numbers for height, length, and width within columns A-I.")
+         st.warning("Warning: Could not parse any valid panels with the selected columns. Please check your mappings and file content.")
     return panels
 
 
@@ -164,32 +151,64 @@ spacing = st.number_input("Panel spacing (mm)", min_value=0, value=100)
 
 if uploaded_file:
     file_extension = uploaded_file.name.split('.')[-1].lower()
-    df = None
+    
     try:
+        # --- Handle Tabular Data (Excel or CSV) ---
         if file_extension in ["xlsx", "csv"]:
-            st.subheader("File Settings")
-            header_row = st.number_input("Select the header row (the first row is 0)", min_value=0, max_value=20, value=2)
+            st.header("1. File Settings")
+            header_row = st.number_input("Select the header row (the first row of your data is 0)", min_value=0, max_value=20, value=2)
             
-            # FIX: Only read columns A through I
+            # Read only columns A through I as requested
             if file_extension == "xlsx":
                 df = pd.read_excel(uploaded_file, header=header_row, usecols='A:I')
             else: # "csv"
-                df = pd.read_csv(uploaded_file, header=header_row, usecols=range(9)) # 9 columns = A through I
+                df = pd.read_csv(uploaded_file, header=header_row, usecols=range(9))
             
-            st.subheader("Data Preview (First 5 Rows from Columns A-I)")
-            st.dataframe(df.head())
+            df.columns = df.columns.str.strip()
+            app_columns = df.columns.tolist()
+
+            st.header("2. Map Your Columns")
+            st.info("Select which column from your file corresponds to each required data field.")
             
-            analyze_data = st.button("Run Analysis")
+            col1, col2 = st.columns(2)
+            with col1:
+                # Attempt to pre-select a logical default if the column name exists
+                type_idx = app_columns.index('cast unit') if 'cast unit' in app_columns else 0
+                type_col = st.selectbox("Panel Type/Name Column:", app_columns, index=type_idx)
+                
+                len_idx = app_columns.index('length, mm') if 'length, mm' in app_columns else 0
+                len_col = st.selectbox("Length (mm) Column:", app_columns, index=len_idx)
+                
+                wgt_col = st.selectbox("Weight (kg) Column (Optional):", [None] + app_columns)
+
+            with col2:
+                hgt_idx = app_columns.index('height, mm') if 'height, mm' in app_columns else 0
+                hgt_col = st.selectbox("Height (mm) Column:", app_columns, index=hgt_idx)
+
+                dep_idx = app_columns.index('width, mm') if 'width, mm' in app_columns else 0
+                dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns, index=dep_idx)
+
+            st.header("3. Run Analysis")
+            analyze_data = st.button("Run Analysis with these settings")
+
             if analyze_data:
-                panels = parse_excel_panels(df, spacing)
+                column_map = {
+                    "panel type": type_col,
+                    "length (mm)": len_col,
+                    "height (mm)": hgt_col,
+                    "depth (mm)": dep_col,
+                    "weight (kg)": wgt_col,
+                }
+                panels = parse_excel_panels(df, spacing, column_map)
+                
                 if panels:
                     beds, trucks = compute_beds_and_trucks(panels)
                     st.success(f"Parsed {len(panels)} panels, which fit into {len(beds)} beds and {len(trucks)} trucks.")
                     output = export_to_excel(beds, trucks)
                     st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
 
+        # --- Handle PDF Data ---
         elif file_extension == "pdf":
-            # PDF logic remains unchanged
             analyze_pdf = st.button("Run PDF Analysis")
             if analyze_pdf:
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
