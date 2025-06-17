@@ -167,28 +167,35 @@ if uploaded_file:
     # --- Handle Tabular Data (Excel or CSV) ---
     elif file_extension in ["xlsx", "csv"]:
         st.header("1. File Settings")
-        header_row = st.number_input("Select the header row (the first row of your data is 0)", min_value=0, max_value=20, value=2)
+        header_row = st.number_input(
+            "Select the row containing column names (the first row is 0):",
+            min_value=0, max_value=20, value=2,
+            help="This should be the row with names like 'cast unit', 'length, mm', etc."
+        )
         
         df = None
-        # --- Step 1: Read the file ---
         try:
-            # FIX: Remove the 'usecols' constraint to read all columns from the file
-            # This is more robust than trying to guess the correct range.
+            # Load all columns to ensure file reading is robust
             if file_extension == "xlsx":
                 df = pd.read_excel(uploaded_file, header=header_row)
-            else: # "csv"
+            else:
                 df = pd.read_csv(uploaded_file, header=header_row)
         except Exception as e:
             st.error(f"Fatal Error Reading File: {e}")
-            st.info("The application cannot continue. Please ensure the 'header row' number is correct and the file is not corrupted.")
-            st.stop() # Stop the script if file reading fails
+            st.info("The application cannot continue. Please ensure the 'header row' number is correct.")
+            st.stop()
 
-        # --- Step 2: If file was read successfully, show the mapping UI ---
-        st.success("File read successfully! Please map your columns below.")
+        # --- FIX: New UI Flow ---
+        # Step 2: Show a preview of the data
+        st.header("2. Data Preview")
+        st.info("Here are the first 5 rows of your data. Use this to verify the correct header was selected.")
+        st.dataframe(df.head())
+
         df.columns = df.columns.str.strip()
         app_columns = df.columns.tolist()
 
-        st.header("2. Map Your Columns")
+        # Step 3: Show the column mapping interface
+        st.header("3. Map Your Columns")
         st.info("Select which column from your file corresponds to each required data field.")
         
         col1, col2 = st.columns(2)
@@ -208,7 +215,8 @@ if uploaded_file:
             dep_idx = app_columns.index('width, mm') if 'width, mm' in app_columns else 0
             dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns, index=dep_idx)
 
-        st.header("3. Run Analysis")
+        # Step 4: Show the analysis button
+        st.header("4. Run Analysis")
         analyze_data = st.button("Run Analysis with these settings")
 
         if analyze_data:
