@@ -83,6 +83,8 @@ def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buff
             st.error(f"❌ Error parsing PDF match: {e}")
     return panels
 
+
+# --- Parser with added debugging ---
 def parse_excel_panels(df, spacing, column_map):
     panels = []
     
@@ -96,9 +98,24 @@ def parse_excel_panels(df, spacing, column_map):
         st.error("Error: Please map all required dimension columns (Type, Length, Height, Depth).")
         return []
 
+    # --- NEW DEBUGGING LINES ---
+    st.write(f"DEBUG: Type of 'df' object going into parser: `{type(df)}`")
+    if not isinstance(df, pd.DataFrame):
+        st.error("FATAL DEBUG ERROR: The data passed to the parser is not a DataFrame. Stopping.")
+        return []
+    # --- END DEBUGGING ---
+
     for index, row in df.iterrows():
+        # --- NEW DEBUGGING LINES ---
+        st.write(f"DEBUG: Type of 'row' object on iteration {index}: `{type(row)}`")
+        if not isinstance(row, pd.Series):
+            st.warning(f"Skipping iteration {index} because the row object is not of the correct type.")
+            continue
+        # --- END DEBUGGING ---
+
         try:
-            panel_type_value = row.get(type_col)
+            # Use standard indexing for safety
+            panel_type_value = row[type_col]
             if pd.isna(panel_type_value) or str(panel_type_value).strip() == "":
                 continue
 
@@ -126,6 +143,8 @@ def parse_excel_panels(df, spacing, column_map):
             panels.append({ "Type": str(row[type_col]), "Height": d, "Width": l, "Depth": h, "Weight": weight })
         except Exception as e:
             st.error(f"❌ An error occurred on row index {index}: {e}")
+            st.write("Problematic row data:", row.to_dict())
+
 
     if not panels:
          st.warning("Warning: Could not parse any valid panels with the selected columns. Please check your mappings and file content.")
@@ -150,32 +169,18 @@ if uploaded_file:
         st.header("1. File Settings")
         
         col1_settings, col2_settings = st.columns(2)
-        
         with col1_settings:
-            header_row = st.number_input(
-                "Select the header row (the first row is 0):",
-                min_value=0, max_value=20, value=2,
-                help="This should be the row with names like 'cast unit', 'length, mm', etc."
-            )
-        
+            header_row = st.number_input("Select the header row (the first row is 0):", min_value=0, max_value=20, value=2)
         with col2_settings:
-            # FIX: Add a delimiter selection box
             delimiter_options = { "Comma": ",", "Semicolon": ";", "Tab": "\t" }
-            delimiter_choice = st.selectbox(
-                "Select column delimiter:",
-                options=list(delimiter_options.keys()),
-                help="Choose the character that separates columns in your file."
-            )
+            delimiter_choice = st.selectbox("Select column delimiter:", options=list(delimiter_options.keys()))
         
         df = None
         try:
             delimiter = delimiter_options[delimiter_choice]
             df = pd.read_csv(
-                uploaded_file,
-                header=header_row,
-                encoding='utf-8-sig',
-                sep=delimiter, # Use the selected delimiter
-                index_col=False # Let pandas handle the index
+                uploaded_file, header=header_row, encoding='utf-8-sig',
+                sep=delimiter, engine='python', index_col=0 
             )
         except Exception as e:
             st.error(f"Error Reading CSV File: {e}")
@@ -183,7 +188,7 @@ if uploaded_file:
             st.stop()
 
         st.header("2. Data Preview")
-        st.info("Here are the first 5 rows of your data. If columns are not separated correctly, please adjust the delimiter above.")
+        st.info("Here are the first 5 rows of your data.")
         st.dataframe(df.head())
 
         df.columns = df.columns.str.strip()
