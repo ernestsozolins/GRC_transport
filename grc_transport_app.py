@@ -48,6 +48,8 @@ def parse_excel_panels(file_path, spacing=100):
     df = pd.read_excel(file_path)
     df.columns = df.columns.str.strip().str.lower()
     colnames = df.columns.tolist()
+    st.write("Detected columns:", colnames)
+
 
     column_map = {}
     targets = {
