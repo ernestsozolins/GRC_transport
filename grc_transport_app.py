@@ -141,24 +141,23 @@ spacing = st.number_input("Panel spacing (mm)", min_value=0, value=100)
 if uploaded_file:
     file_extension = uploaded_file.name.split('.')[-1].lower()
     
+    # FIX: This if/elif/else block is now correctly indented inside 'if uploaded_file:'
     if file_extension == "pdf":
         analyze_pdf = st.button("Run PDF Analysis")
         if analyze_pdf:
-            # PDF logic remains the same
-            # ...
+            # PDF logic goes here
+            pass
     
-elif file_extension == "csv":
-        # FIX: Re-introduced the header row selection, as it's critical
+    elif file_extension == "csv":
         st.header("1. File Settings")
         header_row = st.number_input(
             "Select the row containing column names (the first row is 0):",
             min_value=0, max_value=20, value=2,
             help="This should be the row with names like 'cast unit', 'length, mm', etc."
         )
-
+        
         df = None
         try:
-            # Use encoding='utf-8-sig' to handle CSVs with a BOM
             df = pd.read_csv(uploaded_file, header=header_row, encoding='utf-8-sig')
         except Exception as e:
             st.error(f"Error Reading CSV File: {e}")
@@ -169,7 +168,6 @@ elif file_extension == "csv":
         st.info("Here are the first 5 rows of your data. Use this to verify the correct header was selected.")
         st.dataframe(df.head())
 
-        # Clean the column names to be safe
         df.columns = df.columns.str.strip()
         app_columns = [col for col in df.columns if col is not None and str(col).strip() != '']
 
