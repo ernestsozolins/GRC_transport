@@ -181,7 +181,7 @@ if uploaded_file and uploaded_file.name.endswith(".xlsx"):
         st.subheader("Preview First Rows")
         st.dataframe(preview_df)
         header_row = st.number_input("Select header row (0-indexed)", min_value=0, max_value=10, value=1)
-        proceed = st.button("Analyze")
+        proceed = st.button("Preview and Set Header")
     except Exception as e:
         st.error(f"Error reading Excel preview: {e}")
         preview_df = None
@@ -190,7 +190,7 @@ else:
     proceed = st.button("Analyze")
 
 if uploaded_file and proceed:
-    analyze = st.button("Analyze")
+    analyze = st.button("Run Analysis")
     if analyze:
         with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
             tmp_file.write(uploaded_file.read())
