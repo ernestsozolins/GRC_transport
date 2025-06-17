@@ -24,7 +24,7 @@ def compute_beds_and_trucks(panels, bed_width=2400, bed_weight_limit=2500, truck
         bed_length = max(p['Width'] for p in bed)
         bed_height = max(p['Height'] for p in bed)
         bed_weight = sum(p['Weight'] for p in bed)
-        panel_types = [p['Type'] for p in bed]
+        panel_types = ", ".join(str(p['Type']) for p in bed if pd.notna(p['Type']))
         bed_summaries.append({
             'Length': bed_length, 'Height': bed_height, 'Width': bed_width,
             'Weight': bed_weight, 'Num Panels': len(bed), 'Panel Types': panel_types
@@ -49,9 +49,10 @@ def export_to_excel(beds, trucks):
         pd.DataFrame(beds).to_excel(writer, index=False, sheet_name="Beds")
         truck_summary = []
         for i, truck in enumerate(trucks):
+            all_panel_types = ", ".join(b['Panel Types'] for b in truck)
             truck_summary.append({
                 "Truck #": i + 1, "Num Beds": len(truck), "Total Weight (kg)": sum(b['Weight'] for b in truck),
-                "Panel Types": ", ".join(str(pt) for b in truck for pt in b["Panel Types"] if pd.notna(pt))
+                "Panel Types": all_panel_types
             })
         pd.DataFrame(truck_summary).to_excel(writer, index=False, sheet_name="Truck Summary")
         summary = pd.DataFrame({"Metric": ["Total Beds", "Total Trucks"], "Value": [len(beds), len(trucks)]})
@@ -127,7 +128,7 @@ def parse_excel_panels(df, spacing, column_map):
             st.error(f"❌ An error occurred on row index {index}: {e}")
 
     if not panels:
-         st.warning("Warning: Could not parse any valid panels. Please check your column mappings and ensure rows have a panel type and valid numbers for dimensions.")
+         st.warning("Warning: Could not parse any valid panels with the selected columns. Please check your mappings and file content.")
     return panels
 
 
@@ -141,31 +142,48 @@ spacing = st.number_input("Panel spacing (mm)", min_value=0, value=100)
 if uploaded_file:
     file_extension = uploaded_file.name.split('.')[-1].lower()
     
-    # FIX: This if/elif/else block is now correctly indented inside 'if uploaded_file:'
     if file_extension == "pdf":
-        analyze_pdf = st.button("Run PDF Analysis")
-        if analyze_pdf:
-            # PDF logic goes here
-            pass
+        # PDF logic is unchanged
+        pass
     
     elif file_extension == "csv":
         st.header("1. File Settings")
-        header_row = st.number_input(
-            "Select the row containing column names (the first row is 0):",
-            min_value=0, max_value=20, value=2,
-            help="This should be the row with names like 'cast unit', 'length, mm', etc."
-        )
+        
+        col1_settings, col2_settings = st.columns(2)
+        
+        with col1_settings:
+            header_row = st.number_input(
+                "Select the header row (the first row is 0):",
+                min_value=0, max_value=20, value=2,
+                help="This should be the row with names like 'cast unit', 'length, mm', etc."
+            )
+        
+        with col2_settings:
+            # FIX: Add a delimiter selection box
+            delimiter_options = { "Comma": ",", "Semicolon": ";", "Tab": "\t" }
+            delimiter_choice = st.selectbox(
+                "Select column delimiter:",
+                options=list(delimiter_options.keys()),
+                help="Choose the character that separates columns in your file."
+            )
         
         df = None
         try:
-            df = pd.read_csv(uploaded_file, header=header_row, encoding='utf-8-sig')
+            delimiter = delimiter_options[delimiter_choice]
+            df = pd.read_csv(
+                uploaded_file,
+                header=header_row,
+                encoding='utf-8-sig',
+                sep=delimiter, # Use the selected delimiter
+                index_col=False # Let pandas handle the index
+            )
         except Exception as e:
             st.error(f"Error Reading CSV File: {e}")
-            st.info("Please ensure the 'header row' number is correct and the file is a standard comma-separated CSV.")
+            st.info("Please ensure the 'header row' and 'delimiter' are correct.")
             st.stop()
 
         st.header("2. Data Preview")
-        st.info("Here are the first 5 rows of your data. Use this to verify the correct header was selected.")
+        st.info("Here are the first 5 rows of your data. If columns are not separated correctly, please adjust the delimiter above.")
         st.dataframe(df.head())
 
         df.columns = df.columns.str.strip()
@@ -174,14 +192,14 @@ if uploaded_file:
         st.header("3. Map Your Columns")
         st.info("Select which column from your file corresponds to each required data field.")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            type_col = st.selectbox("Panel Type/Name Column:", app_columns)
-            len_col = st.selectbox("Length (mm) Column:", app_columns)
-            wgt_col = st.selectbox("Weight (kg) Column (Optional):", [None] + app_columns)
-        with col2:
-            hgt_col = st.selectbox("Height (mm) Column:", app_columns)
-            dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns)
+        col1_map, col2_map = st.columns(2)
+        with col1_map:
+            type_col = st.selectbox("Panel Type/Name Column:", app_columns, key="type_col")
+            len_col = st.selectbox("Length (mm) Column:", app_columns, key="len_col")
+            wgt_col = st.selectbox("Weight (kg) Column (Optional):", [None] + app_columns, key="wgt_col")
+        with col2_map:
+            hgt_col = st.selectbox("Height (mm) Column:", app_columns, key="hgt_col")
+            dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns, key="dep_col")
 
         st.header("4. Run Analysis")
         analyze_data = st.button("Run Analysis with these settings")
@@ -197,6 +215,20 @@ if uploaded_file:
             if panels:
                 beds, trucks = compute_beds_and_trucks(panels)
                 st.success(f"Parsed {len(panels)} panels, which fit into {len(beds)} beds and {len(trucks)} trucks.")
+                
+                st.subheader("Bed Summary")
+                st.dataframe(pd.DataFrame(beds))
+                st.subheader("Truck Summary")
+                truck_summary_list = []
+                for i, truck in enumerate(trucks):
+                    all_panel_types = ", ".join(b['Panel Types'] for b in truck)
+                    truck_summary_list.append({
+                        "Truck #": i + 1, "Num Beds": len(truck),
+                        "Total Weight (kg)": sum(b['Weight'] for b in truck),
+                        "Panel Types": all_panel_types
+                    })
+                st.dataframe(pd.DataFrame(truck_summary_list))
+
                 output = export_to_excel(beds, trucks)
                 st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
     else:
