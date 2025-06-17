@@ -86,7 +86,7 @@ def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buff
     return panels
 
 
-# --- Parser with new filtering logic ---
+# --- Parser that uses a user-defined column map ---
 def parse_excel_panels(df, spacing, column_map):
     panels = []
     
@@ -102,11 +102,9 @@ def parse_excel_panels(df, spacing, column_map):
 
     for index, row in df.iterrows():
         try:
-            # FIX: New filtering logic to skip rows with empty panel type
             panel_type_value = row.get(type_col)
-            # Check for NaN, None, empty string, or whitespace-only string
             if pd.isna(panel_type_value) or str(panel_type_value).strip() == "":
-                continue # Skip this row and move to the next one
+                continue
 
             l_num = pd.to_numeric(row[len_col], errors='coerce')
             h_num = pd.to_numeric(row[hgt_col], errors='coerce')
@@ -180,18 +178,28 @@ if uploaded_file:
         )
         
         df = None
+        # --- Step 1: Read the file with robust fallback logic ---
         try:
-            # Load all columns to ensure file reading is robust
             if file_extension == "xlsx":
-                df = pd.read_excel(uploaded_file, header=header_row)
-            else:
+                try:
+                    # Attempt to read as a standard Excel file
+                    df = pd.read_excel(uploaded_file, header=header_row)
+                except ValueError as e:
+                    # If it's a format error, try reading it as a CSV instead
+                    if "Excel file format cannot be determined" in str(e):
+                        st.warning("⚠️ This .xlsx file could not be read as standard Excel. Attempting to read as a CSV file.")
+                        uploaded_file.seek(0) # Reset file buffer before reading again
+                        df = pd.read_csv(uploaded_file, header=header_row)
+                    else:
+                        raise e # Re-raise other ValueErrors
+            else: # It's a .csv file, so read it as such
                 df = pd.read_csv(uploaded_file, header=header_row)
         except Exception as e:
             st.error(f"Fatal Error Reading File: {e}")
-            st.info("The application cannot continue. Please ensure the 'header row' number is correct.")
+            st.info("The application cannot continue. Please ensure the 'header row' number is correct and the file is not corrupted.")
             st.stop()
 
-        # Step 2: Show a preview of the data
+        # --- Step 2: Show preview and mapping UI ---
         st.header("2. Data Preview")
         st.info("Here are the first 5 rows of your data. Use this to verify the correct header was selected.")
         st.dataframe(df.head())
@@ -199,7 +207,6 @@ if uploaded_file:
         df.columns = df.columns.str.strip()
         app_columns = df.columns.tolist()
 
-        # Step 3: Show the column mapping interface
         st.header("3. Map Your Columns")
         st.info("Select which column from your file corresponds to each required data field.")
         
@@ -220,7 +227,6 @@ if uploaded_file:
             dep_idx = app_columns.index('width, mm') if 'width, mm' in app_columns else 0
             dep_col = st.selectbox("Depth/Width (mm) Column:", app_columns, index=dep_idx)
 
-        # Step 4: Show the analysis button
         st.header("4. Run Analysis")
         analyze_data = st.button("Run Analysis with these settings")
 
