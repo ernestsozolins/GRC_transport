@@ -10,8 +10,7 @@ import difflib
 # --- Parsing Logic ---
 def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buffer=0.10):
     panels = []
-    st.write("
---- Debugging Excel Rows ---")
+    st.write("--- Debugging Excel Rows ---")
     with pdfplumber.open(file_path) as pdf:
         text = "\n".join(page.extract_text() for page in pdf.pages if page.extract_text())
 
