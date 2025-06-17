@@ -8,7 +8,6 @@ import xlsxwriter
 import difflib
 
 # --- Parsing Logic ---
-# (parse_pdf_panels, fuzzy_match_column, compute_beds_and_trucks, and export_to_excel are unchanged)
 def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buffer=0.10):
     panels = []
     with pdfplumber.open(file_path) as pdf:
@@ -32,7 +31,6 @@ def parse_pdf_panels(file_path, spacing=100, thickness=0.016, density=2100, buff
                 })
         except Exception as e:
             st.error(f"❌ Error parsing PDF match: {e}")
-            st.write("🚨 Problematic match data:", match_data)
     return panels
 
 def fuzzy_match_column(df_columns, target_keywords):
@@ -96,13 +94,10 @@ def export_to_excel(beds, trucks):
     return output
 
 
-# --- DEBUGGING VERSION of parse_excel_panels ---
+# --- FINAL, SIMPLIFIED PARSER ---
 def parse_excel_panels(df, spacing=100):
-    df.replace(to_replace=r"\s+", value="", regex=True, inplace=True)
-    df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
     df.columns = df.columns.str.strip().str.lower()
     colnames = df.columns.tolist()
-    st.write("Detected columns:", colnames)
 
     column_map = {}
     targets = {
@@ -118,78 +113,61 @@ def parse_excel_panels(df, spacing=100):
         match = fuzzy_match_column(colnames, potential_names)
         if match:
             column_map[key] = match
-    st.write("Mapped Columns:", column_map)
 
     panels = []
-    st.info("Starting panel processing. Verbose debugging is enabled.")
-
     for index, row in df.iterrows():
-        st.markdown(f"--- Processing Row Index: {index} ---")
         try:
-            h_num, l_num, d_num = None, None, None
+            l_num, h_num, d_num = None, None, None
 
-            # Print the raw data we are about to process from the mapped columns
-            dim_val = str(row.get(column_map.get("dimensions", "not_found")))
-            h_val = str(row.get(column_map.get("height (mm)", "not_found")))
-            l_val = str(row.get(column_map.get("length (mm)", "not_found")))
-            d_val = str(row.get(column_map.get("depth (mm)", "not_found")))
-            st.write(f"Raw Data: dimensions='{dim_val}', height='{h_val}', length='{l_val}', depth='{d_val}'")
-
-            # METHOD 1: Combined 'dimensions' column
-            if "dimensions" in column_map and pd.notna(row.get(column_map["dimensions"])):
-                parts = re.findall(r'(\d+\.?\d*)', str(row.get(column_map["dimensions"])))
+            # Attempt 1: Parse the 'dimensions' column first
+            dim_val = row.get(column_map.get("dimensions"))
+            if pd.notna(dim_val) and isinstance(dim_val, str):
+                parts = re.findall(r'(\d+\.?\d*)', dim_val)
                 if len(parts) == 3:
-                    l_num, h_num, d_num = float(parts[0]), float(parts[1]), float(parts[2])
-                    st.write(f"DEBUG: Method 1 (Dimensions Column) Succeeded. l={l_num}, h={h_num}, d={d_num}")
+                    l_num = float(parts[0])
+                    h_num = float(parts[1])
+                    d_num = float(parts[2])
 
-            # METHOD 2: Fallback to individual dimensions
-            if h_num is None:
-                st.write("DEBUG: Method 1 failed or was skipped. Trying Method 2 (Individual Columns).")
-                if all(k in column_map for k in ["height (mm)", "length (mm)", "depth (mm)"]):
-                    h_cand = pd.to_numeric(row.get(column_map["height (mm)"]), errors='coerce')
-                    l_cand = pd.to_numeric(row.get(column_map["length (mm)"]), errors='coerce')
-                    d_cand = pd.to_numeric(row.get(column_map["depth (mm)"]), errors='coerce')
-                    st.write(f"DEBUG: Individual columns converted to numeric: h={h_cand}, l={l_cand}, d={d_cand}")
-                    if pd.notna(h_cand) and pd.notna(l_cand) and pd.notna(d_cand):
-                        h_num, l_num, d_num = h_cand, l_cand, d_cand
-                        st.write("DEBUG: Method 2 Succeeded.")
+            # Attempt 2: If the first method failed, try individual columns
+            if l_num is None:
+                l_val = pd.to_numeric(row.get(column_map.get("length (mm)")), errors='coerce')
+                h_val = pd.to_numeric(row.get(column_map.get("height (mm)")), errors='coerce')
+                d_val = pd.to_numeric(row.get(column_map.get("depth (mm)")), errors='coerce')
 
-            st.markdown(f"**Final Values Before Calculation (Row {index}):**")
-            st.write(f"- `l_num`: `{l_num}` (type: `{type(l_num)}`)")
-            st.write(f"- `h_num`: `{h_num}` (type: `{type(h_num)}`)")
-            st.write(f"- `d_num`: `{d_num}` (type: `{type(d_num)}`)")
-
-            if h_num is None or l_num is None or d_num is None:
-                st.warning(f"Skipping row {index}: Could not find valid dimensions.")
+                if pd.notna(l_val) and pd.notna(h_val) and pd.notna(d_val):
+                    l_num, h_num, d_num = l_val, h_val, d_val
+            
+            # If after all attempts we still don't have numbers, skip the row silently.
+            if l_num is None:
                 continue
-
-            # THE CALCULATION WHERE THE ERROR HAPPENS
+            
+            # If we get here, l_num, h_num, and d_num are guaranteed to be numbers.
             h = h_num + 2 * spacing
             l = l_num + 2 * spacing
             d = d_num + 2 * spacing
-            
-            st.success(f"Row {index}: Calculations successful.")
-            
-            # (The rest of the logic is the same)
+
+            # --- Weight Calculation ---
             weight = 0
             weight_val = row.get(column_map.get("weight (kg)"))
             weight_num = pd.to_numeric(weight_val, errors='coerce')
             if pd.notna(weight_num) and weight_num > 0:
                 weight = weight_num
-            else:
+            else: # Fallback to estimation
                 thickness, density, buffer = 0.016, 2100, 0.10
                 area_m2 = (l_num / 1000) * (h_num / 1000)
                 volume_m3 = area_m2 * (d_num / 1000 if d_num > 5 else thickness)
                 weight = round(volume_m3 * density * (1 + buffer), 2)
+
             panels.append({
                 "Type": str(row.get(column_map.get("panel type", "Unknown"))),
                 "Height": d, "Width": l, "Depth": h, "Weight": weight
             })
         except Exception as e:
-            st.error(f"❌ An error occurred on row {index}: {e}")
+            st.error(f"❌ An error occurred on row index {index}: {e}")
+            st.write("This row could not be processed:", row.to_dict())
     
     if not panels:
-         st.warning("Could not parse any valid panels from the file. Please check the file format and header row selection.")
+         st.warning("Warning: Could not parse any valid panel data from the file. Please check the file's content and the selected header row.")
     return panels
 
 
@@ -205,13 +183,16 @@ if uploaded_file:
     df = None
     try:
         if file_extension in ["xlsx", "csv"]:
-            st.subheader("File Preview & Settings")
-            header_row = st.number_input("Select the header row (0-indexed, first row is 0)", min_value=0, max_value=20, value=2)
+            st.subheader("File Settings")
+            header_row = st.number_input("Select the header row (the first row is 0)", min_value=0, max_value=20, value=2)
             if file_extension == "xlsx":
                 df = pd.read_excel(uploaded_file, header=header_row)
             else:
                 df = pd.read_csv(uploaded_file, header=header_row)
+            
+            st.subheader("Data Preview (First 5 Rows)")
             st.dataframe(df.head())
+            
             analyze_data = st.button("Run Analysis")
             if analyze_data:
                 panels = parse_excel_panels(df, spacing)
@@ -220,6 +201,7 @@ if uploaded_file:
                     st.success(f"Parsed {len(panels)} panels, which fit into {len(beds)} beds and {len(trucks)} trucks.")
                     output = export_to_excel(beds, trucks)
                     st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
+
         elif file_extension == "pdf":
             analyze_pdf = st.button("Run PDF Analysis")
             if analyze_pdf:
@@ -233,6 +215,7 @@ if uploaded_file:
                 st.download_button("Download Transport Plan", data=output, file_name="transport_plan.xlsx")
         else:
             st.error("Unsupported file type. Please upload a PDF, XLSX, or CSV file.")
+
     except Exception as e:
-        st.error(f"An error occurred during processing: {e}")
+        st.error(f"An error occurred during file processing: {e}")
         st.info("Please check that the selected header row is correct and the file format is not corrupted.")
