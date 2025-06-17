@@ -169,11 +169,12 @@ st.set_page_config(page_title="GRC Transport Planner", layout="wide")
 st.title("🚚 GRC Panel Transport & Storage Estimator")
 
 uploaded_file = st.file_uploader("Upload a PDF or Excel File", type=["pdf", "xlsx"])
+uploaded_bytes = uploaded_file.read() if uploaded_file else None
 spacing = st.number_input("Panel spacing (mm)", min_value=0, value=100)
 
 if uploaded_file and uploaded_file.name.endswith(".xlsx"):
     with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-        tmp_file.write(uploaded_file.read())
+        tmp_file.write(uploaded_bytes)
         tmp_file_path = tmp_file.name
 
     try:
