@@ -21,60 +21,76 @@ def parse_excel_panels(file_path, spacing=100, header_row=0):
         "panel type": ["panel type", "type", "cast unit", "cast_unit"],
         "height (mm)": ["height", "height (mm)", "augstums"],
         "length (mm)": ["length", "length (mm)", "garums"],
-        "depth (mm)": ["depth", "depth (mm)", "platums"],
-        "weight (kg)": ["weight", "weight (kg)", "svars"]
+        "depth (mm)": ["depth", "depth (mm)", "platums", "width"],
+        "weight (kg)": ["weight", "weight (kg)", "svars"],
+        # FIX: Add a target for the combined dimensions column
+        "dimensions": ["dimensions", "dimensions (l*h*w), mm", "izmēri"]
     }
 
+    # Standard columns
     required_keys = ["panel type", "height (mm)", "length (mm)", "depth (mm)"]
-    optional_keys = ["weight (kg)"]
+    optional_keys = ["weight (kg)", "dimensions"]
 
-    missing = []
     for key in required_keys:
         match = fuzzy_match_column(colnames, targets[key])
         if match:
             column_map[key] = match
-        else:
-            missing.append(key)
-
+    
+    # Optional columns, no error if missing
     for key in optional_keys:
         match = fuzzy_match_column(colnames, targets[key])
         if match:
             column_map[key] = match
 
-    if missing:
-        raise ValueError(f"Missing required columns: {missing}")
-
     panels = []
-    # FIX: The logic inside the loop is now more robust to handle bad data.
     for index, row in df.iterrows():
         try:
-            # --- FIX 1: Safely convert required dimensions to numbers ---
-            # pd.to_numeric will turn empty strings and other non-numbers into NaN (Not a Number)
-            h_num = pd.to_numeric(row[column_map["height (mm)"]], errors='coerce')
-            l_num = pd.to_numeric(row[column_map["length (mm)"]], errors='coerce')
-            d_num = pd.to_numeric(row[column_map["depth (mm)"]], errors='coerce')
+            h_num, l_num, d_num = None, None, None
 
-            # --- FIX 2: Skip rows if essential data is missing or not a number ---
-            if pd.isna(h_num) or pd.isna(l_num) or pd.isna(d_num):
-                # Using the DataFrame index and header_row to give a helpful row number from the file
-                st.warning(f"⚠️ Skipping row {index + header_row + 2} due to missing/invalid dimension values.")
-                continue  # Go to the next row
+            # --- FIX: New, more robust logic to find dimensions ---
 
-            # If we get here, we have valid numbers. Now we can do the math.
+            # METHOD 1: Try to get individual dimensions first
+            if all(k in column_map for k in ["height (mm)", "length (mm)", "depth (mm)"]):
+                h_cand = pd.to_numeric(row.get(column_map["height (mm)"]), errors='coerce')
+                l_cand = pd.to_numeric(row.get(column_map["length (mm)"]), errors='coerce')
+                d_cand = pd.to_numeric(row.get(column_map["depth (mm)"]), errors='coerce')
+                if pd.notna(h_cand) and pd.notna(l_cand) and pd.notna(d_cand):
+                    h_num, l_num, d_num = h_cand, l_cand, d_cand
+
+            # METHOD 2: If individual dimensions failed, try parsing the combined 'dimensions' column
+            if h_num is None and "dimensions" in column_map:
+                dim_str = str(row.get(column_map["dimensions"]))
+                parts = re.findall(r'(\d+\.?\d*)', dim_str) # Find all numbers (including decimals)
+                if len(parts) == 3:
+                    # Assuming order is L x H x W (depth) based on common notation
+                    l_num, h_num, d_num = float(parts[0]), float(parts[1]), float(parts[2])
+            
+            # VALIDATION: Check if we found valid dimensions from either method
+            if h_num is None or l_num is None or d_num is None:
+                st.warning(f"⚠️ Skipping row {index + header_row + 2}: Could not find valid dimensions.")
+                continue
+
+            # We have valid dimensions, proceed with calculations
             h = h_num + 2 * spacing
             l = l_num + 2 * spacing
             d = d_num + 2 * spacing
+            
+            # --- FIX: New, more robust logic for weight ---
             weight = 0
-
-            if "weight (kg)" in column_map:
-                # Also use the safe conversion for the optional weight column
-                weight_val = pd.to_numeric(row[column_map["weight (kg)"]], errors='coerce')
-                # If conversion is successful (not NaN), use the value. Otherwise, weight remains 0.
-                if pd.notna(weight_val):
-                    weight = weight_val
+            weight_val = row.get(column_map.get("weight (kg)"))
+            weight_num = pd.to_numeric(weight_val, errors='coerce')
+            
+            if pd.notna(weight_num) and weight_num > 0:
+                weight = weight_num
+            else:
+                # Fallback to estimating weight if not provided, mimicking the PDF parser
+                thickness, density, buffer = 0.016, 2100, 0.10
+                area_m2 = (l_num / 1000) * (h_num / 1000)
+                volume_m3 = area_m2 * (d_num / 1000 if d_num > 5 else thickness) # Use real depth if available
+                weight = round(volume_m3 * density * (1 + buffer), 2)
 
             panel = {
-                "Type": str(row[column_map["panel type"]]) if pd.notna(row[column_map["panel type"]]) else "Unknown",
+                "Type": str(row.get(column_map.get("panel type", "Unknown"))),
                 "Height": d,
                 "Width": l,
                 "Depth": h,
@@ -83,9 +99,14 @@ def parse_excel_panels(file_path, spacing=100, header_row=0):
             panels.append(panel)
 
         except Exception as e:
-            # FIX 3: Improved error message with the specific row index
             st.error(f"❌ Error parsing row at Excel index {index + header_row + 2}: {e}")
             st.write("🚨 Problematic row data:", row.to_dict())
+            
+    # Check if required columns were even found in the file
+    if not all(k in column_map for k in ["height (mm)", "length (mm)", "depth (mm)"]) and "dimensions" not in column_map:
+        st.error("Could not find the required dimension columns (height, length, depth) or a fallback 'dimensions' column in the file.")
+        return [] # Return empty list to prevent further errors
+        
     return panels
 
 
