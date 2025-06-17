@@ -147,7 +147,7 @@ if uploaded_file:
             # PDF logic remains the same
             # ...
     
-    elif file_extension == "csv":
+        elif file_extension == "csv":
         # FIX: Re-introduced the header row selection, as it's critical
         st.header("1. File Settings")
         header_row = st.number_input(
